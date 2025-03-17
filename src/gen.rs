@@ -1,13 +1,13 @@
 use crate::ast::*;
 use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, FunctionData, Program, Type};
 
-pub trait IRGenerator {
+pub trait GenerateIR {
     type R;
 
     fn generate_ir(&self, program: &mut Program) -> Result<Self::R, ()>;
 }
 
-impl IRGenerator for CompUnit {
+impl GenerateIR for CompUnit {
     type R = ();
 
     fn generate_ir(&self, program: &mut Program) -> Result<Self::R, ()> {
@@ -16,7 +16,7 @@ impl IRGenerator for CompUnit {
     }
 }
 
-impl IRGenerator for FuncDef {
+impl GenerateIR for FuncDef {
     type R = ();
 
     fn generate_ir(&self, program: &mut Program) -> Result<Self::R, ()> {
@@ -39,7 +39,7 @@ impl IRGenerator for FuncDef {
     }
 }
 
-impl IRGenerator for FuncType {
+impl GenerateIR for FuncType {
     type R = Type;
 
     fn generate_ir(&self, program: &mut Program) -> Result<Self::R, ()> {
@@ -49,7 +49,7 @@ impl IRGenerator for FuncType {
     }
 }
 
-impl IRGenerator for Block {
+impl GenerateIR for Block {
     type R = i32;
 
     fn generate_ir(&self, program: &mut Program) -> Result<Self::R, ()> {
@@ -57,7 +57,7 @@ impl IRGenerator for Block {
     }
 }
 
-impl IRGenerator for Stmt {
+impl GenerateIR for Stmt {
     type R = i32;
 
     fn generate_ir(&self, program: &mut Program) -> Result<Self::R, ()> {
