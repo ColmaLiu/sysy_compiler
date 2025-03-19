@@ -1,5 +1,10 @@
-use asm::GenerateAsm;
-use gen::GenerateIR;
+mod asm;
+mod ast_type;
+mod ir;
+
+use asm::asm::GenerateAsm;
+use ir::context::Context;
+use ir::ir::GenerateIR;
 use koopa::back::KoopaGenerator;
 use koopa::ir::Program;
 use lalrpop_util::lalrpop_mod;
@@ -8,10 +13,6 @@ use std::fs::{self, read_to_string, File};
 use std::io::Write;
 
 lalrpop_mod!(sysy);
-
-mod asm;
-mod ast;
-mod gen;
 
 fn main() -> Result<(), String> {
     let mut args = args();
@@ -30,15 +31,13 @@ fn main() -> Result<(), String> {
         _ => Err("Unexpected mode"),
     }?;
 
-    // let ast = sysy::CompUnitParser::new().parse(&input).expect("Parsing failed");
     let ast = sysy::CompUnitParser::new().parse(&input).map_err(
         |e| {e.to_string()}
     )?;
 
     let mut program = Program::new();
-    ast.generate_ir(&mut program).map_err(
-        |_e| {"Generating Koopa IR failed"}
-    )?;
+    let mut context = Context::new();
+    ast.generate_ir(&mut program, &mut context)?;
 
     if mode == "-koopa" {
         let mut generator = KoopaGenerator::new(Vec::new());
