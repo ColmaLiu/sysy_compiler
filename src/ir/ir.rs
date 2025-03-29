@@ -93,12 +93,11 @@ impl GenerateIR for UnaryExp {
             }
             UnaryExp::Unary(unary_op, unary_exp) => {
                 let unary_exp = unary_exp.as_ref();
-                let op = match unary_op {
-                    UnaryOp::Pos => BinaryOp::Add,
-                    UnaryOp::Neg => BinaryOp::Sub,
-                    UnaryOp::Not => BinaryOp::Eq,
-                };
-                exp2ir(op, &Number::IntConst(0), unary_exp, program, context)
+                match unary_op {
+                    UnaryOp::Pos => unary_exp.generate_ir(program, context),
+                    UnaryOp::Neg => exp2ir(BinaryOp::Sub, &Number::IntConst(0), unary_exp, program, context),
+                    UnaryOp::Not => exp2ir(BinaryOp::Eq, &Number::IntConst(0), unary_exp, program, context),
+                }
             }
         }
     }
@@ -206,11 +205,11 @@ impl GenerateIR for LOrExp {
             }
             LOrExp::LOr(lor_exp, land_exp) => {
                 let lor_exp = lor_exp.as_ref();
-                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), lor_exp, program, context)?;
-                let lhs = context.value.unwrap();
-                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), land_exp, program, context)?;
-                let rhs = context.value.unwrap();
-                val2ir(BinaryOp::Or, lhs, rhs, program, context);
+                exp2ir(BinaryOp::Or, lor_exp, land_exp, program, context)?;
+                let bitor_value = context.value.unwrap();
+                Number::IntConst(0).generate_ir(program, context)?;
+                let zero = context.value.unwrap();
+                val2ir(BinaryOp::NotEq, bitor_value, zero, program, context);
                 Ok(())
             }
         }
