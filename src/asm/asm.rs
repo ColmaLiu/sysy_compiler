@@ -33,6 +33,7 @@ impl GenerateAsm for FunctionData {
                                 }
                                 ValueKind::Binary(_) => {
                                     let reg_idx = info.get_occupied(ret_value)?;
+                                    info.free_reg(reg_idx);
                                     asm.push(format!("  mv a0, {}", REGISTER[reg_idx]));
                                 }
                                 other_kind => {
@@ -56,19 +57,19 @@ impl GenerateAsm for FunctionData {
                                     }
                                 }
                                 ValueKind::Binary(_) => {
-                                    info.get_occupied(value).map(|idx| (idx, false))
+                                    info.get_occupied(value).map(|idx| (idx, true))
                                 }
                                 other_kind => {
                                     Err(format!("Unknown value kind {:?}", other_kind))
                                 }
                             }
                         };
-                        let (lhs_reg, lhs_nzint) = get_reg(binary.lhs())?;
-                        let (rhs_reg, rhs_nzint) = get_reg(binary.rhs())?;
-                        if lhs_nzint {
+                        let (lhs_reg, lhs_need_free) = get_reg(binary.lhs())?;
+                        let (rhs_reg, rhs_need_free) = get_reg(binary.rhs())?;
+                        if lhs_need_free {
                             info.free_reg(lhs_reg);
                         }
-                        if rhs_nzint {
+                        if rhs_need_free {
                             info.free_reg(rhs_reg);
                         }
                         let res_reg = info.set_reg(inst)?;
