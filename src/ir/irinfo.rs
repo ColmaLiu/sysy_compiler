@@ -2,15 +2,17 @@ use std::collections::HashMap;
 
 use koopa::ir::{BasicBlock, Function, Value};
 
+#[derive(Default)]
 pub struct Context {
     pub function: Option<Function>,
+    pub returned: bool,
     pub block: Option<BasicBlock>,
     pub value: Option<Value>,
 }
 
 impl Context {
     pub fn new() -> Self {
-        Context { function: None, block: None, value: None }
+        Default::default()
     }
 }
 

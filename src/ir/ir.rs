@@ -115,6 +115,9 @@ impl GenerateIR for FuncDef {
 impl GenerateIR for Block {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         for block_item in &self.block_items {
+            if info.context.returned == true {
+                break;
+            }
             block_item.generate_ir(program, info)?;
         }
         Ok(())
@@ -152,11 +155,16 @@ impl GenerateIR for Stmt {
                 }
             }
             Self::Return(exp) => {
+                if info.context.returned == true {
+                    return Ok(());
+                }
                 exp.generate_ir(program, info)?;
 
                 let func_data = program.func_mut(info.context.function.unwrap());
                 let ret = func_data.dfg_mut().new_value().ret(info.context.value);
                 func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
+
+                info.context.returned = true;
             }
         }
         Ok(())
