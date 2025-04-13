@@ -4,7 +4,7 @@ mod ir;
 
 use asm::asm::GenerateAsm;
 use asm::asminfo::AsmInfo;
-use ir::context::Context;
+use ir::irinfo::IrInfo;
 use ir::ir::GenerateIR;
 use koopa::back::KoopaGenerator;
 use koopa::ir::Program;
@@ -37,8 +37,7 @@ fn main() -> Result<(), String> {
     )?;
 
     let mut program = Program::new();
-    let mut context = Context::new();
-    ast.generate_ir(&mut program, &mut context)?;
+    ast.generate_ir(&mut program, &mut IrInfo::new())?;
 
     if mode == "-koopa" {
         let mut generator = KoopaGenerator::new(Vec::new());
@@ -48,8 +47,7 @@ fn main() -> Result<(), String> {
         )?;
     } else if mode == "-riscv" {
         let mut asm = Vec::new();
-        let mut info: AsmInfo = Default::default();
-        program.generate_asm(&mut asm, &mut info)?;
+        program.generate_asm(&mut asm, &mut AsmInfo::new())?;
         let mut file = File::create(output).map_err(
             |_e| {"Opening output file failed"}
         )?;

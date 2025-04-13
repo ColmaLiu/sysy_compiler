@@ -7,6 +7,10 @@ pub struct AsmInfo {
 }
 
 impl AsmInfo {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
     pub fn get_vacant(&self) -> Result<usize, String> {
         for idx in TEMP_IDX {
             if self.reg[idx] == None {

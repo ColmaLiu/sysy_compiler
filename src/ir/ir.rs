@@ -1,22 +1,95 @@
 use crate::ast_type::*;
 use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value};
-use super::context::Context;
+use super::{irinfo::{Context, IrInfo, Symbol}, solve::Solve};
 
 pub trait GenerateIR {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String>;
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String>;
 }
 
 trait Expression: GenerateIR {}
 
 impl GenerateIR for CompUnit {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
-        self.func_def.generate_ir(program, context)?;
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        self.func_def.generate_ir(program, info)
+    }
+}
+
+impl GenerateIR for Decl {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        match self {
+            Self::Const(const_decl) => const_decl.generate_ir(program, info),
+            Self::Var(var_decl) => var_decl.generate_ir(program, info),
+        }
+    }
+}
+
+impl GenerateIR for ConstDecl {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        match self.b_type {
+            BType::Int => {
+                for const_def in &self.const_defs {
+                    const_def.generate_ir(program, info)?;
+                }
+            }
+        }
         Ok(())
     }
 }
 
+impl GenerateIR for ConstDef {
+    fn generate_ir(&self, _program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        let int = self.const_init_val.const_exp.solve(info).map_err(|_err| "Unknown value during compile time")?;
+        if info.symble_table.insert(
+            self.ident.clone(), super::irinfo::Symbol::Const(self.ident.clone(), int)
+        ).is_none() {
+            Ok(())
+        } else {
+            Err("Redefined symbol".to_string())
+        }
+    }
+}
+
+impl GenerateIR for VarDecl {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        match self.b_type {
+            BType::Int => {
+                for var_def in &self.var_defs {
+                    var_def.generate_ir(program, info)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl GenerateIR for VarDef {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        let func_data = program.func_mut(info.context.function.unwrap());
+        let var = func_data.dfg_mut().new_value().alloc(Type::get_i32());
+        func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([var]);
+        if info.symble_table.insert(
+            self.ident.clone(), super::irinfo::Symbol::Var(self.ident.clone(), var)
+        ).is_some() {
+            return Err("Redefined symbol".to_string());
+        }
+        if let Some(init_val) = &self.init_val {
+            init_val.generate_ir(program, info)?;
+            let func_data = program.func_mut(info.context.function.unwrap());
+            let store = func_data.dfg_mut().new_value().store(info.context.value.unwrap(), var);
+            func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([store]);
+        }
+        Ok(())
+    }
+}
+
+impl GenerateIR for InitVal {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        self.exp.generate_ir(program, info)
+    }
+}
+
 impl GenerateIR for FuncDef {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         let ret_ty = match self.func_type {
             FuncType::Int => Type::get_i32(),
         };
@@ -30,55 +103,111 @@ impl GenerateIR for FuncDef {
         let entry = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
         func_data.layout_mut().bbs_mut().extend([entry]);
 
-        context.function = Some(func);
-        context.block = Some(entry);
+        info.context.function = Some(func);
+        info.context.block = Some(entry);
 
-        self.block.generate_ir(program, context)?;
+        self.block.generate_ir(program, info)?;
 
         Ok(())
     }
 }
 
 impl GenerateIR for Block {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
-        self.stmt.generate_ir(program, context)
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        for block_item in &self.block_items {
+            block_item.generate_ir(program, info)?;
+        }
+        Ok(())
+    }
+}
+
+impl GenerateIR for BlockItem {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        match self {
+            Self::Decl(decl) => decl.generate_ir(program, info),
+            Self::Stmt(stmt) => stmt.generate_ir(program, info)
+        }
     }
 }
 
 impl GenerateIR for Stmt {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
-        self.exp.generate_ir(program, context)?;
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        match self {
+            Self::Assign(lval, exp ) => {
+                exp.generate_ir(program, info)?;
+                let exp_val = info.context.value.unwrap();
 
-        let func_data = program.func_mut(context.function.unwrap());
-        let ret = func_data.dfg_mut().new_value().ret(context.value);
-        func_data.layout_mut().bb_mut(context.block.unwrap()).insts_mut().extend([ret]);
+                match info.symble_table.get(&lval.ident) {
+                    Some(Symbol::Var(_, var)) => {
+                        let func_data = program.func_mut(info.context.function.unwrap());
+                        let store = func_data.dfg_mut().new_value().store(exp_val, *var);
+                        func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([store]);
+                    }
+                    Some(Symbol::Const(_, _)) => {
+                        return Err("Constant can not be a left value".to_string());
+                    }
+                    None => {
+                        return Err("Undefined symbol".to_string());
+                    }
+                }
+            }
+            Self::Return(exp) => {
+                exp.generate_ir(program, info)?;
 
+                let func_data = program.func_mut(info.context.function.unwrap());
+                let ret = func_data.dfg_mut().new_value().ret(info.context.value);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
+            }
+        }
         Ok(())
     }
 }
 
 impl GenerateIR for Exp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
-        self.lor_exp.generate_ir(program, context)
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        self.lor_exp.generate_ir(program, info)
+    }
+}
+
+impl GenerateIR for LVal {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        let func_data = program.func_mut(info.context.function.unwrap());
+        if let Some(symbol) = info.symble_table.get(&self.ident) {
+            match symbol {
+                Symbol::Const(_, int) => {
+                    let value = func_data.dfg_mut().new_value().integer(*int);
+                    info.context.value = Some(value);
+                }
+                Symbol::Var(_, var) => {
+                    let load = func_data.dfg_mut().new_value().load(*var);
+                    func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([load]);
+                    info.context.value = Some(load);
+                }
+            }
+            Ok(())
+        } else {
+            Err("Undefined symbol".to_string())
+        }
     }
 }
 
 impl GenerateIR for PrimaryExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            PrimaryExp::Exp(exp) => exp.as_ref().generate_ir(program, context),
-            PrimaryExp::Num(num) => num.generate_ir(program, context),
+            Self::Exp(exp) => exp.as_ref().generate_ir(program, info),
+            Self::LVal(lval) => lval.generate_ir(program, info),
+            Self::Num(num) => num.generate_ir(program, info),
         }
     }
 }
 
 impl GenerateIR for Number {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
-        let func_data = program.func_mut(context.function.unwrap());
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        let func_data = program.func_mut(info.context.function.unwrap());
         match self {
-            Number::IntConst(int) => {
+            Self::IntConst(int) => {
                 let value = func_data.dfg_mut().new_value().integer(*int);
-                context.value = Some(value);
+                info.context.value = Some(value);
             }
         }
         Ok(())
@@ -86,17 +215,17 @@ impl GenerateIR for Number {
 }
 
 impl GenerateIR for UnaryExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            UnaryExp::Primary(primary_exp) => {
-                primary_exp.generate_ir(program, context)
+            Self::Primary(primary_exp) => {
+                primary_exp.generate_ir(program, info)
             }
-            UnaryExp::Unary(unary_op, unary_exp) => {
+            Self::Unary(unary_op, unary_exp) => {
                 let unary_exp = unary_exp.as_ref();
                 match unary_op {
-                    UnaryOp::Pos => unary_exp.generate_ir(program, context),
-                    UnaryOp::Neg => exp2ir(BinaryOp::Sub, &Number::IntConst(0), unary_exp, program, context),
-                    UnaryOp::Not => exp2ir(BinaryOp::Eq, &Number::IntConst(0), unary_exp, program, context),
+                    UnaryOp::Pos => unary_exp.generate_ir(program, info),
+                    UnaryOp::Neg => exp2ir(BinaryOp::Sub, &Number::IntConst(0), unary_exp, program, info),
+                    UnaryOp::Not => exp2ir(BinaryOp::Eq, &Number::IntConst(0), unary_exp, program, info),
                 }
             }
         }
@@ -104,49 +233,49 @@ impl GenerateIR for UnaryExp {
 }
 
 impl GenerateIR for MulExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            MulExp::Unary(exp) => {
-                exp.generate_ir(program, context)
+            Self::Unary(exp) => {
+                exp.generate_ir(program, info)
             }
-            MulExp::Mul(mul_exp, mul_op, unary_exp) => {
+            Self::Mul(mul_exp, mul_op, unary_exp) => {
                 let mul_exp = mul_exp.as_ref();
                 let op = match mul_op {
                     MulOp::Mul => BinaryOp::Mul,
                     MulOp::Div => BinaryOp::Div,
                     MulOp::Mod => BinaryOp::Mod,
                 };
-                exp2ir(op, mul_exp, unary_exp, program, context)
+                exp2ir(op, mul_exp, unary_exp, program, info)
             }
         }
     }
 }
 
 impl GenerateIR for AddExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            AddExp::Mul(exp) => {
-                exp.generate_ir(program, context)
+            Self::Mul(exp) => {
+                exp.generate_ir(program, info)
             }
-            AddExp::Add(add_exp, add_op, mul_exp) => {
+            Self::Add(add_exp, add_op, mul_exp) => {
                 let add_exp = add_exp.as_ref();
                 let op = match add_op {
                     AddOp::Add => BinaryOp::Add,
                     AddOp::Sub => BinaryOp::Sub,
                 };
-                exp2ir(op, add_exp, mul_exp, program, context)
+                exp2ir(op, add_exp, mul_exp, program, info)
             }
         }
     }
 }
 
 impl GenerateIR for RelExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            RelExp::Add(exp) => {
-                exp.generate_ir(program, context)
+            Self::Add(exp) => {
+                exp.generate_ir(program, info)
             }
-            RelExp::Rel(rel_exp, rel_op, add_exp) => {
+            Self::Rel(rel_exp, rel_op, add_exp) => {
                 let rel_exp = rel_exp.as_ref();
                 let op = match rel_op {
                     RelOp::Lt => BinaryOp::Lt,
@@ -154,43 +283,43 @@ impl GenerateIR for RelExp {
                     RelOp::Le => BinaryOp::Le,
                     RelOp::Ge => BinaryOp::Ge,
                 };
-                exp2ir(op, rel_exp, add_exp, program, context)
+                exp2ir(op, rel_exp, add_exp, program, info)
             }
         }
     }
 }
 
 impl GenerateIR for EqExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            EqExp::Rel(exp) => {
-                exp.generate_ir(program, context)
+            Self::Rel(exp) => {
+                exp.generate_ir(program, info)
             }
-            EqExp::Eq(eq_exp, eq_op, rel_exp) => {
+            Self::Eq(eq_exp, eq_op, rel_exp) => {
                 let eq_exp = eq_exp.as_ref();
                 let op = match eq_op {
                     EqOp::Eq => BinaryOp::Eq,
                     EqOp::NotEq => BinaryOp::NotEq,
                 };
-                exp2ir(op, eq_exp, rel_exp, program, context)
+                exp2ir(op, eq_exp, rel_exp, program, info)
             }
         }
     }
 }
 
 impl GenerateIR for LAndExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            LAndExp::Eq(exp) => {
-                exp.generate_ir(program, context)
+            Self::Eq(exp) => {
+                exp.generate_ir(program, info)
             }
-            LAndExp::LAnd(land_exp, eq_exp) => {
+            Self::LAnd(land_exp, eq_exp) => {
                 let land_exp = land_exp.as_ref();
-                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), land_exp, program, context)?;
-                let lhs = context.value.unwrap();
-                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), eq_exp, program, context)?;
-                let rhs = context.value.unwrap();
-                val2ir(BinaryOp::And, lhs, rhs, program, context);
+                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), land_exp, program, info)?;
+                let lhs = info.context.value.unwrap();
+                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), eq_exp, program, info)?;
+                let rhs = info.context.value.unwrap();
+                val2ir(BinaryOp::And, lhs, rhs, program, &mut info.context);
                 Ok(())
             }
         }
@@ -198,18 +327,18 @@ impl GenerateIR for LAndExp {
 }
 
 impl GenerateIR for LOrExp {
-    fn generate_ir(&self, program: &mut Program, context: &mut Context) -> Result<(), String> {
+    fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         match self {
-            LOrExp::LAnd(exp) => {
-                exp.generate_ir(program, context)
+            Self::LAnd(exp) => {
+                exp.generate_ir(program, info)
             }
-            LOrExp::LOr(lor_exp, land_exp) => {
+            Self::LOr(lor_exp, land_exp) => {
                 let lor_exp = lor_exp.as_ref();
-                exp2ir(BinaryOp::Or, lor_exp, land_exp, program, context)?;
-                let bitor_value = context.value.unwrap();
-                Number::IntConst(0).generate_ir(program, context)?;
-                let zero = context.value.unwrap();
-                val2ir(BinaryOp::NotEq, bitor_value, zero, program, context);
+                exp2ir(BinaryOp::Or, lor_exp, land_exp, program, info)?;
+                let bitor_value = info.context.value.unwrap();
+                Number::IntConst(0).generate_ir(program, info)?;
+                let zero = info.context.value.unwrap();
+                val2ir(BinaryOp::NotEq, bitor_value, zero, program, &mut info.context);
                 Ok(())
             }
         }
@@ -233,13 +362,13 @@ fn exp2ir(
     lexp: &dyn Expression,
     rexp: &dyn Expression,
     program: &mut Program,
-    context: &mut Context,
+    info: &mut IrInfo,
 ) -> Result<(), String> {
-    lexp.generate_ir(program, context)?;
-    let lhs = context.value.unwrap();
-    rexp.generate_ir(program, context)?;
-    let rhs = context.value.unwrap();
-    val2ir(op, lhs, rhs, program, context);
+    lexp.generate_ir(program, info)?;
+    let lhs = info.context.value.unwrap();
+    rexp.generate_ir(program, info)?;
+    let rhs = info.context.value.unwrap();
+    val2ir(op, lhs, rhs, program, &mut info.context);
     Ok(())
 }
 

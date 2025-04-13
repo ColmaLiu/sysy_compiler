@@ -1,2 +1,3 @@
-pub mod context;
 pub mod ir;
+pub mod irinfo;
+pub mod solve;

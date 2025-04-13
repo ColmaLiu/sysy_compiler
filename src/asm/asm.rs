@@ -7,7 +7,7 @@ pub trait GenerateAsm {
 
 impl GenerateAsm for Program {
     fn generate_asm(&self, asm: &mut Vec<String>, info: &mut AsmInfo) -> Result<(), String> {
-        asm.push(".text".to_string());
+        asm.push("  .text".to_string());
         for &func in self.func_layout() {
             self.func(func).generate_asm(asm, info)?;
         }
@@ -20,7 +20,7 @@ impl GenerateAsm for FunctionData {
         let name = &self.name()[1..];
         asm.push(format!("  .globl {}", name));
         asm.push(format!("{}:", name));
-        for (&bb, node) in self.layout().bbs() {
+        for (&_bb, node) in self.layout().bbs() {
             for &inst in node.insts().keys() {
                 let value_data = self.dfg().value(inst);
                 match value_data.kind() {
