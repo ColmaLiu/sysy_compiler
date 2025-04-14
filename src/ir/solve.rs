@@ -50,7 +50,7 @@ impl Solve for UnaryExp {
                 match unary_op {
                     UnaryOp::Pos => unary_exp.solve(info),
                     UnaryOp::Neg => unary_exp.solve(info).map(|int| -int),
-                    UnaryOp::Not => unary_exp.solve(info).map(|int| !int),
+                    UnaryOp::Not => unary_exp.solve(info).map(|int| if int == 0 { 1 } else { 0 }),
                 }
             }
         }

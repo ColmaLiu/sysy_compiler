@@ -66,6 +66,7 @@ impl GenerateIR for VarDef {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         let func_data = program.func_mut(info.context.function.unwrap());
         let var = func_data.dfg_mut().new_value().alloc(Type::get_i32());
+        func_data.dfg_mut().set_value_name(var, Some(format!("@{}", self.ident)));
         func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([var]);
         if info.symble_table.insert(
             self.ident.clone(), super::irinfo::Symbol::Var(self.ident.clone(), var)
