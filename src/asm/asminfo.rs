@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use crate::asm::TEMP_IDX;
 use koopa::ir::Value;
 
 #[derive(Default)]
 pub struct AsmInfo {
     pub reg: [Option<Value>; 32],
+    pub stack: HashMap<Value, usize>,
 }
 
 impl AsmInfo {
