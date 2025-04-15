@@ -39,7 +39,7 @@ impl GenerateIR for ConstDecl {
 impl GenerateIR for ConstDef {
     fn generate_ir(&self, _program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         let int = self.const_init_val.const_exp.solve(info).map_err(|_err| "Unknown value during compile time")?;
-        if info.symble_table.insert(
+        if info.symbol_table.insert(
             self.ident.clone(), super::irinfo::Symbol::Const(self.ident.clone(), int)
         ).is_none() {
             Ok(())
@@ -66,9 +66,9 @@ impl GenerateIR for VarDef {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         let func_data = program.func_mut(info.context.function.unwrap());
         let var = func_data.dfg_mut().new_value().alloc(Type::get_i32());
-        func_data.dfg_mut().set_value_name(var, Some(format!("@{}", self.ident)));
+        func_data.dfg_mut().set_value_name(var, Some(format!("@{}_{}", self.ident, info.symbol_table.depth())));
         func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([var]);
-        if info.symble_table.insert(
+        if info.symbol_table.insert(
             self.ident.clone(), super::irinfo::Symbol::Var(self.ident.clone(), var)
         ).is_some() {
             return Err("Redefined symbol".to_string());
@@ -115,12 +115,14 @@ impl GenerateIR for FuncDef {
 
 impl GenerateIR for Block {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
+        info.symbol_table.push_table();
         for block_item in &self.block_items {
             if info.context.returned == true {
                 break;
             }
             block_item.generate_ir(program, info)?;
         }
+        info.symbol_table.pop_table();
         Ok(())
     }
 }
@@ -141,7 +143,7 @@ impl GenerateIR for Stmt {
                 exp.generate_ir(program, info)?;
                 let exp_val = info.context.value.unwrap();
 
-                match info.symble_table.get(&lval.ident) {
+                match info.symbol_table.get(&lval.ident) {
                     Some(Symbol::Var(_, var)) => {
                         let func_data = program.func_mut(info.context.function.unwrap());
                         let store = func_data.dfg_mut().new_value().store(exp_val, *var);
@@ -155,15 +157,25 @@ impl GenerateIR for Stmt {
                     }
                 }
             }
+            Self::Exp(exp) => {
+                if let Some(exp) = exp {
+                    exp.generate_ir(program, info)?;
+                }
+            }
+            Self::Block(block) => {
+                block.generate_ir(program, info)?;
+            }
             Self::Return(exp) => {
                 if info.context.returned == true {
                     return Ok(());
                 }
-                exp.generate_ir(program, info)?;
+                if let Some(exp) = exp {
+                    exp.generate_ir(program, info)?;
 
-                let func_data = program.func_mut(info.context.function.unwrap());
-                let ret = func_data.dfg_mut().new_value().ret(info.context.value);
-                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
+                    let func_data = program.func_mut(info.context.function.unwrap());
+                    let ret = func_data.dfg_mut().new_value().ret(info.context.value);
+                    func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
+                }
 
                 info.context.returned = true;
             }
@@ -181,7 +193,7 @@ impl GenerateIR for Exp {
 impl GenerateIR for LVal {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         let func_data = program.func_mut(info.context.function.unwrap());
-        if let Some(symbol) = info.symble_table.get(&self.ident) {
+        if let Some(symbol) = info.symbol_table.get(&self.ident) {
             match symbol {
                 Symbol::Const(_, int) => {
                     let value = func_data.dfg_mut().new_value().integer(*int);

@@ -15,7 +15,9 @@
 // Block         ::= "{" {BlockItem} "}";
 // BlockItem     ::= Decl | Stmt;
 // Stmt          ::= LVal "=" Exp ";"
-//                 | "return" Exp ";";
+//                 | [Exp] ";"
+//                 | Block
+//                 | "return" [Exp] ";";
 // 
 // Exp           ::= LOrExp;
 // LVal          ::= IDENT;
@@ -83,7 +85,7 @@ FuncDef: FuncDef = {
 
 FuncType: FuncType = "int" => FuncType::Int;
 
-Block: Block = "{" <block_items: (<BlockItem>)*> "}" => Block { <> };
+Block: Block = "{" <block_items: BlockItem*> "}" => Block { <> };
 
 BlockItem: BlockItem = {
     <Decl> => BlockItem::Decl(<>),
@@ -92,7 +94,9 @@ BlockItem: BlockItem = {
 
 Stmt: Stmt = {
     <LVal> "=" <Exp> ";" => Stmt::Assign(<>),
-    "return" <Exp> ";" => Stmt::Return(<>),
+    <Exp?> ";" => Stmt::Exp(<>),
+    <Block> => Stmt::Block(<>),
+    "return" <Exp?> ";" => Stmt::Return(<>),
 }
 
 Exp: Exp = <lor_exp: LOrExp> => Exp { <> };
