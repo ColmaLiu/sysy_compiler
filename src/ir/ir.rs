@@ -386,12 +386,48 @@ impl GenerateIR for LAndExp {
                 exp.generate_ir(program, info)
             }
             Self::LAnd(land_exp, eq_exp) => {
-                let land_exp = land_exp.as_ref();
-                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), land_exp, program, info)?;
-                let lhs = info.context.value.unwrap();
-                exp2ir(BinaryOp::NotEq, &Number::IntConst(0), eq_exp, program, info)?;
-                let rhs = info.context.value.unwrap();
-                val2ir(BinaryOp::And, lhs, rhs, program, &mut info.context);
+                land_exp.as_ref().generate_ir(program, info)?;
+                let exp1 = info.context.value.unwrap();
+
+                let func = info.context.function.unwrap();
+                match program.func(func).dfg().value(exp1).kind() {
+                    ValueKind::Integer(int) => {
+                        let int_val = int.value();
+                        if int_val == 0 {
+                            return Ok(());
+                        } else {
+                            exp2ir(BinaryOp::NotEq, &Number::IntConst(0), eq_exp, program, info)?;
+                        }
+                    }
+                    _ => {
+                        let then_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%then".to_string()));
+                        let end_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%end".to_string()));
+                        program.func_mut(func).layout_mut().bbs_mut().extend([then_bb]);
+
+                        let func_data = program.func_mut(func);
+                        let result = func_data.dfg_mut().new_value().alloc(Type::get_i32());
+                        let zero = func_data.dfg_mut().new_value().integer(0);
+                        let store = func_data.dfg_mut().new_value().store(zero, result);
+
+                        let func_data = program.func_mut(func);
+                        let branch = func_data.dfg_mut().new_value().branch(exp1, then_bb, end_bb);
+                        func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([result, store, branch]);
+
+                        info.context.block = Some(then_bb);
+                        exp2ir(BinaryOp::NotEq, &Number::IntConst(0), eq_exp, program, info)?;
+                        let func_data = program.func_mut(func);
+                        let store = func_data.dfg_mut().new_value().store(info.context.value.unwrap(), result);
+                        let jump = func_data.dfg_mut().new_value().jump(end_bb);
+                        func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([store, jump]);
+
+                        program.func_mut(func).layout_mut().bbs_mut().extend([end_bb]);
+                        info.context.block = Some(end_bb);
+                        let func_data = program.func_mut(func);
+                        let load = func_data.dfg_mut().new_value().load(result);
+                        func_data.layout_mut().bb_mut(end_bb).insts_mut().extend([load]);
+                        info.context.value = Some(load);
+                    }
+                }
                 Ok(())
             }
         }
@@ -405,12 +441,51 @@ impl GenerateIR for LOrExp {
                 exp.generate_ir(program, info)
             }
             Self::LOr(lor_exp, land_exp) => {
-                let lor_exp = lor_exp.as_ref();
-                exp2ir(BinaryOp::Or, lor_exp, land_exp, program, info)?;
-                let bitor_value = info.context.value.unwrap();
-                Number::IntConst(0).generate_ir(program, info)?;
-                let zero = info.context.value.unwrap();
-                val2ir(BinaryOp::NotEq, bitor_value, zero, program, &mut info.context);
+                lor_exp.as_ref().generate_ir(program, info)?;
+                let exp1 = info.context.value.unwrap();
+
+                let func = info.context.function.unwrap();
+                match program.func(func).dfg().value(exp1).kind() {
+                    ValueKind::Integer(int) => {
+                        let int_val = int.value();
+                        if int_val != 0 {
+                            let func_data = program.func_mut(func);
+                            let one = func_data.dfg_mut().new_value().integer(1);
+                            info.context.value = Some(one);
+                            return Ok(());
+                        } else {
+                            exp2ir(BinaryOp::NotEq, &Number::IntConst(0), land_exp, program, info)?;
+                        }
+                    }
+                    _ => {
+                        let then_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%then".to_string()));
+                        let end_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%end".to_string()));
+                        program.func_mut(func).layout_mut().bbs_mut().extend([then_bb]);
+
+                        let func_data = program.func_mut(func);
+                        let result = func_data.dfg_mut().new_value().alloc(Type::get_i32());
+                        let one = func_data.dfg_mut().new_value().integer(1);
+                        let store = func_data.dfg_mut().new_value().store(one, result);
+
+                        let func_data = program.func_mut(func);
+                        let branch = func_data.dfg_mut().new_value().branch(exp1, end_bb, then_bb);
+                        func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([result, store, branch]);
+
+                        info.context.block = Some(then_bb);
+                        exp2ir(BinaryOp::NotEq, &Number::IntConst(0), land_exp, program, info)?;
+                        let func_data = program.func_mut(func);
+                        let store = func_data.dfg_mut().new_value().store(info.context.value.unwrap(), result);
+                        let jump = func_data.dfg_mut().new_value().jump(end_bb);
+                        func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([store, jump]);
+
+                        program.func_mut(func).layout_mut().bbs_mut().extend([end_bb]);
+                        info.context.block = Some(end_bb);
+                        let func_data = program.func_mut(func);
+                        let load = func_data.dfg_mut().new_value().load(result);
+                        func_data.layout_mut().bb_mut(end_bb).insts_mut().extend([load]);
+                        info.context.value = Some(load);
+                    }
+                }
                 Ok(())
             }
         }
