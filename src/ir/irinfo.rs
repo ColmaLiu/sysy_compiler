@@ -5,8 +5,8 @@ use koopa::ir::{BasicBlock, Function, Value};
 #[derive(Default)]
 pub struct Context {
     pub function: Option<Function>,
-    pub returned: bool,
     pub block: Option<BasicBlock>,
+    pub exited: bool,
     pub value: Option<Value>,
 }
 

@@ -1,5 +1,5 @@
 use crate::ast_type::*;
-use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value};
+use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value, ValueKind};
 use super::{irinfo::{Context, IrInfo, Symbol}, solve::Solve};
 
 pub trait GenerateIR {
@@ -64,9 +64,10 @@ impl GenerateIR for VarDecl {
 
 impl GenerateIR for VarDef {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
-        let func_data = program.func_mut(info.context.function.unwrap());
+        let func = info.context.function.unwrap();
+        let func_data = program.func_mut(func);
         let var = func_data.dfg_mut().new_value().alloc(Type::get_i32());
-        func_data.dfg_mut().set_value_name(var, Some(format!("@{}_{}", self.ident, info.symbol_table.depth())));
+        func_data.dfg_mut().set_value_name(var, Some(format!("@{}", self.ident)));
         func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([var]);
         if info.symbol_table.insert(
             self.ident.clone(), super::irinfo::Symbol::Var(self.ident.clone(), var)
@@ -75,7 +76,7 @@ impl GenerateIR for VarDef {
         }
         if let Some(init_val) = &self.init_val {
             init_val.generate_ir(program, info)?;
-            let func_data = program.func_mut(info.context.function.unwrap());
+            let func_data = program.func_mut(func);
             let store = func_data.dfg_mut().new_value().store(info.context.value.unwrap(), var);
             func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([store]);
         }
@@ -117,7 +118,7 @@ impl GenerateIR for Block {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         info.symbol_table.push_table();
         for block_item in &self.block_items {
-            if info.context.returned == true {
+            if info.context.exited == true {
                 break;
             }
             block_item.generate_ir(program, info)?;
@@ -165,8 +166,58 @@ impl GenerateIR for Stmt {
             Self::Block(block) => {
                 block.generate_ir(program, info)?;
             }
+            Self::If(exp, then_stmt, else_stmt) => {
+                exp.generate_ir(program, info)?;
+
+                let func = info.context.function.unwrap();
+
+                let func_data = program.func_mut(func);
+                let end_bb = func_data.dfg_mut().new_bb().basic_block(Some("%end".to_string()));
+
+                let start_bb = info.context.block.unwrap();
+                let cond = info.context.value.unwrap();
+
+                let func_data = program.func_mut(func);
+                let true_bb = func_data.dfg_mut().new_bb().basic_block(Some("%then".to_string()));
+                program.func_mut(func).layout_mut().bbs_mut().extend([true_bb]);
+                info.context.block = Some(true_bb);
+                then_stmt.as_ref().generate_ir(program, info)?;
+                if !info.context.exited {
+                    let func_data = program.func_mut(func);
+                    let jump = func_data.dfg_mut().new_value().jump(end_bb);
+                    func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([jump]);
+                } else {
+                    info.context.exited = false;
+                }
+
+                let false_bb = match else_stmt {
+                    Some(else_stmt) => {
+                        let func_data = program.func_mut(func);
+                        let else_bb = func_data.dfg_mut().new_bb().basic_block(Some("%else".to_string()));
+                        program.func_mut(func).layout_mut().bbs_mut().extend([else_bb]);
+                        info.context.block = Some(else_bb);
+                        else_stmt.as_ref().generate_ir(program, info)?;
+                        if !info.context.exited {
+                            let func_data = program.func_mut(func);
+                            let jump = func_data.dfg_mut().new_value().jump(end_bb);
+                            func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([jump]);
+                        } else {
+                            info.context.exited = false;
+                        }
+                        else_bb
+                    }
+                    None => end_bb,
+                };
+
+                let func_data = program.func_mut(func);
+                let branch = func_data.dfg_mut().new_value().branch(cond, true_bb, false_bb);
+                func_data.layout_mut().bb_mut(start_bb).insts_mut().extend([branch]);
+
+                program.func_mut(func).layout_mut().bbs_mut().extend([end_bb]);
+                info.context.block = Some(end_bb);
+            }
             Self::Return(exp) => {
-                if info.context.returned == true {
+                if info.context.exited == true {
                     return Ok(());
                 }
                 if let Some(exp) = exp {
@@ -177,7 +228,7 @@ impl GenerateIR for Stmt {
                     func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
                 }
 
-                info.context.returned = true;
+                info.context.exited = true;
             }
         }
         Ok(())
