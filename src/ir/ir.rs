@@ -110,6 +110,12 @@ impl GenerateIR for FuncDef {
 
         self.block.generate_ir(program, info)?;
 
+        if !info.context.exited {
+            let func_data = program.func_mut(info.context.function.unwrap());
+            let ret = func_data.dfg_mut().new_value().ret(None);
+            func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
+        }
+
         Ok(())
     }
 }
@@ -118,7 +124,7 @@ impl GenerateIR for Block {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         info.symbol_table.push_table();
         for block_item in &self.block_items {
-            if info.context.exited == true {
+            if info.context.exited {
                 break;
             }
             block_item.generate_ir(program, info)?;
@@ -217,7 +223,7 @@ impl GenerateIR for Stmt {
                 info.context.block = Some(end_bb);
             }
             Self::Return(exp) => {
-                if info.context.exited == true {
+                if info.context.exited {
                     return Ok(());
                 }
                 if let Some(exp) = exp {
