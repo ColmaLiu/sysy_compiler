@@ -173,18 +173,21 @@ impl GenerateIR for Stmt {
                 block.generate_ir(program, info)?;
             }
             Self::If(exp, then_stmt, else_stmt) => {
+                info.if_cnt += 1;
+                let if_cnt = info.if_cnt;
+
                 exp.generate_ir(program, info)?;
 
                 let func = info.context.function.unwrap();
 
                 let func_data = program.func_mut(func);
-                let end_bb = func_data.dfg_mut().new_bb().basic_block(Some("%end".to_string()));
+                let end_bb = func_data.dfg_mut().new_bb().basic_block(Some(format!("%end_{}", if_cnt)));
 
                 let start_bb = info.context.block.unwrap();
                 let cond = info.context.value.unwrap();
 
                 let func_data = program.func_mut(func);
-                let true_bb = func_data.dfg_mut().new_bb().basic_block(Some("%then".to_string()));
+                let true_bb = func_data.dfg_mut().new_bb().basic_block(Some(format!("%then_{}", if_cnt)));
                 program.func_mut(func).layout_mut().bbs_mut().extend([true_bb]);
                 info.context.block = Some(true_bb);
                 then_stmt.as_ref().generate_ir(program, info)?;
@@ -199,7 +202,7 @@ impl GenerateIR for Stmt {
                 let false_bb = match else_stmt {
                     Some(else_stmt) => {
                         let func_data = program.func_mut(func);
-                        let else_bb = func_data.dfg_mut().new_bb().basic_block(Some("%else".to_string()));
+                        let else_bb = func_data.dfg_mut().new_bb().basic_block(Some(format!("%else_{}", if_cnt)));
                         program.func_mut(func).layout_mut().bbs_mut().extend([else_bb]);
                         info.context.block = Some(else_bb);
                         else_stmt.as_ref().generate_ir(program, info)?;
@@ -406,8 +409,10 @@ impl GenerateIR for LAndExp {
                         }
                     }
                     _ => {
-                        let then_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%then".to_string()));
-                        let end_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%end".to_string()));
+                        info.if_cnt += 1;
+
+                        let then_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some(format!("%then_{}", info.if_cnt)));
+                        let end_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some(format!("%end_{}", info.if_cnt)));
                         program.func_mut(func).layout_mut().bbs_mut().extend([then_bb]);
 
                         let func_data = program.func_mut(func);
@@ -464,8 +469,10 @@ impl GenerateIR for LOrExp {
                         }
                     }
                     _ => {
-                        let then_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%then".to_string()));
-                        let end_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some("%end".to_string()));
+                        info.if_cnt += 1;
+
+                        let then_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some(format!("%then_{}", info.if_cnt)));
+                        let end_bb = program.func_mut(func).dfg_mut().new_bb().basic_block(Some(format!("%end_{}", info.if_cnt)));
                         program.func_mut(func).layout_mut().bbs_mut().extend([then_bb]);
 
                         let func_data = program.func_mut(func);

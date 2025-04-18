@@ -24,6 +24,7 @@ pub struct SymbolTableStack {
 pub struct IrInfo {
     pub context: Context,
     pub symbol_table: SymbolTableStack,
+    pub if_cnt: usize,
 }
 
 impl SymbolTableStack {

@@ -1,4 +1,4 @@
-use koopa::ir::{values::{Binary, Load, Return, Store}, BinaryOp, FunctionData, Program, Value, ValueKind};
+use koopa::ir::{values::{Binary, Branch, Jump, Load, Return, Store}, BinaryOp, FunctionData, Program, Value, ValueKind};
 use super::{asminfo::AsmInfo, REGISTER};
 
 pub trait GenerateAsm {
@@ -43,7 +43,9 @@ impl GenerateAsm for FunctionData {
             asm.push(format!("  add sp, sp, t0"));
         }
 
-        for (&_bb, node) in self.layout().bbs() {
+        for (&bb, node) in self.layout().bbs() {
+            let label = &self.dfg().bb(bb).name().as_ref().unwrap()[1..];
+            asm.push(format!("{}:", label));
             for &inst in node.insts().keys() {
                 let value_data = self.dfg().value(inst);
                 match value_data.kind() {
@@ -56,6 +58,12 @@ impl GenerateAsm for FunctionData {
                     }
                     ValueKind::Binary(binary) => {
                         binary_to_asm(self, asm, info, binary, inst, stack_frame)?;
+                    }
+                    ValueKind::Branch(branch) => {
+                        branch_to_asm(self, asm, info, branch, stack_frame)?;
+                    }
+                    ValueKind::Jump(jump) => {
+                        jump_to_asm(self, asm, jump)?;
                     }
                     ValueKind::Return(ret) => {
                         return_to_asm(self, asm, info, ret, stack_frame)?;
@@ -267,6 +275,38 @@ fn binary_to_asm(
         _ => (),
     }
     store_on_stack(info, asm, res_reg, inst, stack_frame)?;
+    Ok(())
+}
+
+fn branch_to_asm(
+    function_data: &FunctionData,
+    asm: &mut Vec<String>,
+    info: &mut AsmInfo,
+    branch: &Branch,
+    stack_frame: usize,
+) -> Result<(), String> {
+    let cond = branch.cond();
+    let true_bb = branch.true_bb();
+    let false_bb = branch.false_bb();
+    let true_label = &function_data.dfg().bb(true_bb).name().as_ref().unwrap()[1..];
+    let false_label = &function_data.dfg().bb(false_bb).name().as_ref().unwrap()[1..];
+    let (reg_idx, need_free) = load_to_reg(function_data, asm, info, cond, stack_frame)?;
+    if need_free {
+        info.free_reg(reg_idx);
+    }
+    asm.push(format!("  bnez {}, {}", REGISTER[reg_idx], true_label));
+    asm.push(format!("  j {}", false_label));
+    Ok(())
+}
+
+fn jump_to_asm(
+    function_data: &FunctionData,
+    asm: &mut Vec<String>,
+    jump: &Jump,
+) -> Result<(), String> {
+    let target = jump.target();
+    let label =  &function_data.dfg().bb(target).name().as_ref().unwrap()[1..];
+    asm.push(format!("  j {}", label));
     Ok(())
 }
 
