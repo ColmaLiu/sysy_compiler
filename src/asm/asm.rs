@@ -27,10 +27,10 @@ impl GenerateAsm for FunctionData {
             for &inst in node.insts().keys() {
                 let value_data = self.dfg().value(inst);
                 if let ValueKind::Alloc(_) = value_data.kind() {
-                    stack_frame += value_data.ty().size();
+                    stack_frame += 4;
                     info.stack.insert(inst, stack_frame);
                 } else if !value_data.ty().is_unit() {
-                    stack_frame += value_data.ty().size();
+                    stack_frame += 4;
                     info.stack.insert(inst, stack_frame);
                 }
             }
@@ -105,7 +105,7 @@ fn load_to_reg(
                 let tmp_reg = info.get_vacant()?;
                 asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
                 asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
-                asm.push(format!("  lw {}, 0(sp)", REGISTER[reg_idx]));
+                asm.push(format!("  lw {}, ({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
             }
             Ok((reg_idx, true))
         }
@@ -126,7 +126,7 @@ fn store_on_stack(
         let tmp_reg = info.get_vacant()?;
         asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
         asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
-        asm.push(format!("  sw {}, 0(sp)", REGISTER[reg_idx]));
+        asm.push(format!("  sw {}, ({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
     }
     Ok(())
 }
@@ -139,10 +139,10 @@ fn load_to_asm(function_data: &FunctionData,
     stack_frame: usize,
 ) -> Result<(), String> {
     let (reg_idx, need_free) = load_to_reg(function_data, asm, info, load.src(), stack_frame)?;
+    store_on_stack(info, asm, reg_idx, inst, stack_frame)?;
     if need_free {
         info.free_reg(reg_idx);
     }
-    store_on_stack(info, asm, reg_idx, inst, stack_frame)?;
     Ok(())
 }
 
@@ -153,10 +153,10 @@ fn store_to_asm(function_data: &FunctionData,
     stack_frame: usize,
 ) -> Result<(), String> {
     let (reg_idx, need_free) = load_to_reg(function_data, asm, info, store.value(), stack_frame)?;
+    store_on_stack(info, asm, reg_idx, store.dest(), stack_frame)?;
     if need_free {
         info.free_reg(reg_idx);
     }
-    store_on_stack(info, asm, reg_idx, store.dest(), stack_frame)?;
     Ok(())
 }
 
@@ -176,7 +176,7 @@ fn binary_to_asm(
     if rhs_need_free {
         info.free_reg(rhs_reg);
     }
-    let res_reg = info.get_vacant()?;
+    let res_reg = info.set_reg(inst)?;
     match binary.op() {
         BinaryOp::NotEq => {
             asm.push(format!(
@@ -275,6 +275,7 @@ fn binary_to_asm(
         _ => (),
     }
     store_on_stack(info, asm, res_reg, inst, stack_frame)?;
+    info.free_reg(res_reg);
     Ok(())
 }
 
