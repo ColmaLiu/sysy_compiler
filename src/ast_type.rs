@@ -77,6 +77,9 @@ pub enum Stmt {
     Exp(Option<Exp>),
     Block(Block),
     If(Exp, Box<Stmt>, Option<Box<Stmt>>),
+    While(Exp, Box<Stmt>),
+    Break,
+    Continue,
     Return(Option<Exp>),
 }
 

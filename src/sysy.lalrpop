@@ -18,6 +18,9 @@
 //                 | [Exp] ";"
 //                 | Block
 //                 | "if" "(" Exp ")" Stmt ["else" Stmt]
+//                 | "while" "(" Exp ")" Stmt
+//                 | "break" ";"
+//                 | "continue" ";"
 //                 | "return" [Exp] ";";
 // 
 // Exp           ::= LOrExp;
@@ -102,20 +105,28 @@ OpenStmt: Stmt = {
     "if" "(" <exp: Exp> ")" <stmt: Stmt> => Stmt::If(exp, Box::new(stmt), None),
     "if" "(" <exp: Exp> ")" <closed_stmt: ClosedStmt> "else" <open_stmt: OpenStmt> => {
         Stmt::If(exp, Box::new(closed_stmt), Some(Box::new(open_stmt)))
-    }
+    },
+    "while" "(" <exp: Exp> ")" <open_stmt: OpenStmt> => {
+        Stmt::While(exp, Box::new(open_stmt))
+    },
 }
 
 ClosedStmt: Stmt = {
     <SimpleStmt> => <>,
     "if" "(" <exp: Exp> ")" <closed_stmt1: ClosedStmt> "else" <closed_stmt2: ClosedStmt> => {
         Stmt::If(exp, Box::new(closed_stmt1), Some(Box::new(closed_stmt2)))
-    }
+    },
+    "while" "(" <exp: Exp> ")" <closed_stmt: ClosedStmt> => {
+        Stmt::While(exp, Box::new(closed_stmt))
+    },
 }
 
 SimpleStmt: Stmt = {
     <LVal> "=" <Exp> ";" => Stmt::Assign(<>),
     <Exp?> ";" => Stmt::Exp(<>),
     <Block> => Stmt::Block(<>),
+    "break" ";" => Stmt::Break,
+    "continue" ";" => Stmt::Continue,
     "return" <Exp?> ";" => Stmt::Return(<>),
 }
 

@@ -1,6 +1,6 @@
 use crate::ast_type::*;
 use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value, ValueKind};
-use super::{irinfo::{Context, IrInfo, Symbol}, solve::Solve};
+use super::{irinfo::{Context, IrInfo, Symbol, WhileBlockInfo}, solve::Solve};
 
 pub trait GenerateIR {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String>;
@@ -224,6 +224,60 @@ impl GenerateIR for Stmt {
 
                 program.func_mut(func).layout_mut().bbs_mut().extend([end_bb]);
                 info.context.block = Some(end_bb);
+            }
+            Self::While(exp, body_stmt) => {
+                info.while_cnt += 1;
+                let while_cnt = info.while_cnt;
+
+                let func = info.context.function.unwrap();
+
+                let func_data = program.func_mut(func);
+                let while_entry_bb = func_data.dfg_mut().new_bb().basic_block(Some(format!("%while_entry_{}", while_cnt)));
+                let while_body_bb = func_data.dfg_mut().new_bb().basic_block(Some(format!("%while_body_{}", while_cnt)));
+                let while_end_bb = func_data.dfg_mut().new_bb().basic_block(Some(format!("%while_end_{}", while_cnt)));
+
+                let func_data = program.func_mut(func);
+                let jump = func_data.dfg_mut().new_value().jump(while_entry_bb);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([jump]);
+
+                program.func_mut(func).layout_mut().bbs_mut().extend([while_entry_bb]);
+                info.context.block = Some(while_entry_bb);
+                exp.generate_ir(program, info)?;
+                let cond = info.context.value.unwrap();
+                let func_data = program.func_mut(func);
+                let branch = func_data.dfg_mut().new_value().branch(cond, while_body_bb, while_end_bb);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([branch]);
+
+                let func_data = program.func_mut(func);
+                program.func_mut(func).layout_mut().bbs_mut().extend([while_body_bb]);
+                info.context.block = Some(while_body_bb);
+                info.while_info.push(WhileBlockInfo::new(while_entry_bb, while_end_bb));
+                body_stmt.as_ref().generate_ir(program, info)?;
+                if !info.context.exited {
+                    let func_data = program.func_mut(func);
+                    let jump = func_data.dfg_mut().new_value().jump(while_entry_bb);
+                    func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([jump]);
+                } else {
+                    info.context.exited = false;
+                }
+
+                program.func_mut(func).layout_mut().bbs_mut().extend([while_end_bb]);
+                info.context.block = Some(while_end_bb);
+                info.while_info.pop();
+            }
+            Self::Break => {
+                let end_bb = info.while_info.last().unwrap().end_bb();
+                let func_data = program.func_mut(info.context.function.unwrap());
+                let jump = func_data.dfg_mut().new_value().jump(end_bb);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([jump]);
+                info.context.exited = true;
+            }
+            Self::Continue => {
+                let entry_bb = info.while_info.last().unwrap().entry_bb();
+                let func_data = program.func_mut(info.context.function.unwrap());
+                let jump = func_data.dfg_mut().new_value().jump(entry_bb);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([jump]);
+                info.context.exited = true;
             }
             Self::Return(exp) => {
                 if info.context.exited {
