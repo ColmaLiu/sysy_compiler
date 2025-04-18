@@ -112,7 +112,8 @@ impl GenerateIR for FuncDef {
 
         if !info.context.exited {
             let func_data = program.func_mut(info.context.function.unwrap());
-            let ret = func_data.dfg_mut().new_value().ret(None);
+            let zero = func_data.dfg_mut().new_value().integer(0);
+            let ret = func_data.dfg_mut().new_value().ret(Some(zero));
             func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
         }
 
@@ -248,7 +249,6 @@ impl GenerateIR for Stmt {
                 let branch = func_data.dfg_mut().new_value().branch(cond, while_body_bb, while_end_bb);
                 func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([branch]);
 
-                let func_data = program.func_mut(func);
                 program.func_mut(func).layout_mut().bbs_mut().extend([while_body_bb]);
                 info.context.block = Some(while_body_bb);
                 info.while_info.push(WhileBlockInfo::new(while_entry_bb, while_end_bb));
