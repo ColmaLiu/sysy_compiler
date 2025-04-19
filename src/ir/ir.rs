@@ -352,14 +352,16 @@ impl GenerateIR for Stmt {
                 if info.context.exited {
                     return Ok(());
                 }
-                if let Some(exp) = exp {
-                    exp.generate_ir(program, info)?;
-
-                    let func_data = program.func_mut(info.context.function.unwrap());
-                    let ret = func_data.dfg_mut().new_value().ret(info.context.value);
-                    func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
-                }
-
+                let ret_value = match exp {
+                    Some(exp) => {
+                        exp.generate_ir(program, info)?;
+                        info.context.value
+                    }
+                    None => None,
+                };
+                let func_data = program.func_mut(info.context.function.unwrap());
+                let ret = func_data.dfg_mut().new_value().ret(ret_value);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
                 info.context.exited = true;
             }
         }
