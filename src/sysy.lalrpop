@@ -1,4 +1,4 @@
-// CompUnit      ::= FuncDef;
+// CompUnit      ::= [CompUnit] (Decl | FuncDef);
 // 
 // Decl          ::= ConstDecl | VarDecl;
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
@@ -9,8 +9,10 @@
 // VarDef        ::= IDENT | IDENT "=" InitVal;
 // InitVal       ::= Exp;
 // 
-// FuncDef       ::= FuncType IDENT "(" ")" Block;
-// FuncType      ::= "int";
+// FuncDef       ::= FuncType IDENT "(" [FuncFParams] ")" Block;
+// FuncType      ::= "void" | "int";
+// FuncFParams   ::= FuncFParam {"," FuncFParam};
+// FuncFParam    ::= BType IDENT;
 // 
 // Block         ::= "{" {BlockItem} "}";
 // BlockItem     ::= Decl | Stmt;
@@ -27,8 +29,9 @@
 // LVal          ::= IDENT;
 // PrimaryExp    ::= "(" Exp ")" | LVal | Number;
 // Number        ::= INT_CONST;
-// UnaryExp      ::= PrimaryExp | UnaryOp UnaryExp;
+// UnaryExp      ::= PrimaryExp | IDENT "(" [FuncRParams] ")" | UnaryOp UnaryExp;
 // UnaryOp       ::= "+" | "-" | "!";
+// FuncRParams   ::= Exp {"," Exp};
 // MulExp        ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
 // AddExp        ::= MulExp | AddExp ("+" | "-") MulExp;
 // RelExp        ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
@@ -48,7 +51,12 @@ match {
     _
 }
 
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
+pub CompUnit: CompUnit = <comp_unit_items: CompUnitItem*> => CompUnit { <> };
+
+CompUnitItem: CompUnitItem = {
+    <Decl> => CompUnitItem::Decl(<>),
+    <FuncDef> => CompUnitItem::FuncDef(<>),
+}
 
 Decl: Decl = {
     <ConstDecl> => Decl::Const(<>),
@@ -56,23 +64,21 @@ Decl: Decl = {
 }
 
 ConstDecl: ConstDecl = {
-    "const" <b_type: BType> <mut const_defs: (<ConstDef> ",")*> <const_def: ConstDef> ";" => {
+    "const" "int" <mut const_defs: (<ConstDef> ",")*> <const_def: ConstDef> ";" => {
         const_defs.push(const_def);
-        ConstDecl { b_type, const_defs }
-    }
+        ConstDecl { const_defs }
+    },
 }
-
-BType: BType = "int" => BType::Int;
 
 ConstDef: ConstDef = <ident: IDENT> "=" <const_init_val: ConstInitVal> => ConstDef { <> };
 
 ConstInitVal: ConstInitVal = <const_exp: ConstExp> => ConstInitVal { <> };
 
 VarDecl: VarDecl = {
-    <b_type: BType> <mut var_defs: (<VarDef> ",")*> <var_def: VarDef> ";" => {
+    "int" <mut var_defs: (<VarDef> ",")*> <var_def: VarDef> ";" => {
         var_defs.push(var_def);
-        VarDecl { b_type, var_defs }
-    }
+        VarDecl { var_defs }
+    },
 }
 
 VarDef: VarDef = {
@@ -82,12 +88,22 @@ VarDef: VarDef = {
 InitVal: InitVal = <exp: Exp> => InitVal { <> };
 
 FuncDef: FuncDef = {
-    <func_type: FuncType> <ident: IDENT> "(" ")" <block: Block> => {
-        FuncDef { <> }
-    }
+    "void" <ident: IDENT> "(" <params: FuncFParams?> ")" <block: Block> => {
+        FuncDef { func_type: FuncType::Void, <> }
+    },
+    "int" <ident: IDENT> "(" <params: FuncFParams?> ")" <block: Block> => {
+        FuncDef { func_type: FuncType::Int, <> }
+    },
 }
 
-FuncType: FuncType = "int" => FuncType::Int;
+FuncFParams: FuncFParams = {
+    <mut params: (<FuncFParam> ",")*> <param: FuncFParam> => {
+        params.push(param);
+        FuncFParams { params }
+    },
+}
+
+FuncFParam: FuncFParam = "int" <ident: IDENT> => FuncFParam { <> };
 
 Block: Block = "{" <block_items: BlockItem*> "}" => Block { <> };
 
@@ -144,6 +160,7 @@ Number: Number = <INT_CONST> => Number::IntConst(<>);
 
 UnaryExp: UnaryExp = {
     <PrimaryExp> => UnaryExp::Primary(<>),
+    <IDENT> "(" <FuncRParams?> ")" => UnaryExp::Func(<>),
     <unary_op: UnaryOp> <unary_exp: UnaryExp> => UnaryExp::Unary(unary_op, Box::new(unary_exp)),
 }
 
@@ -151,6 +168,13 @@ UnaryOp: UnaryOp = {
     "+" => UnaryOp::Pos,
     "-" => UnaryOp::Neg,
     "!" => UnaryOp::Not,
+}
+
+FuncRParams: FuncRParams = {
+    <mut params: (<Exp> ",")*> <param: Exp> => {
+        params.push(param);
+        FuncRParams { params }
+    },
 }
 
 MulExp: MulExp = {

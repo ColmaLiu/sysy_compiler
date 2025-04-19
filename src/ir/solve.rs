@@ -45,6 +45,9 @@ impl Solve for UnaryExp {
             UnaryExp::Primary(primary_exp) => {
                 primary_exp.solve(info)
             }
+            UnaryExp::Func(_, _) => {
+                Err(())
+            }
             UnaryExp::Unary(unary_op, unary_exp) => {
                 let unary_exp = unary_exp.as_ref();
                 match unary_op {

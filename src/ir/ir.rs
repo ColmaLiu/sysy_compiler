@@ -1,5 +1,7 @@
+use std::iter::zip;
+
 use crate::ast_type::*;
-use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value, ValueKind};
+use koopa::ir::{builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value, ValueKind};
 use super::{irinfo::{Context, IrInfo, Symbol, WhileBlockInfo}, solve::Solve};
 
 pub trait GenerateIR {
@@ -10,7 +12,35 @@ trait Expression: GenerateIR {}
 
 impl GenerateIR for CompUnit {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
-        self.func_def.generate_ir(program, info)
+        info.symbol_table.push_table();
+        let names = [
+            "getint", "getch", "getarray", "putint", "putch", "putarray", "starttime", "stoptime"
+        ];
+        let params_tys = [
+            vec![], vec![], vec![Type::get_pointer(Type::get_i32())], vec![Type::get_i32()],
+            vec![Type::get_i32()], vec![Type::get_i32(), Type::get_pointer(Type::get_i32())],
+            vec![], vec![]
+        ];
+        let ret_tys = [
+            Type::get_i32(), Type::get_i32(), Type::get_i32(), Type::get_unit(),
+            Type::get_unit(), Type::get_unit(), Type::get_unit(), Type::get_unit()
+        ];
+        for (name, (params_ty, ret_ty)) in zip(names, zip(params_tys, ret_tys)) {
+            let function = program.new_func(FunctionData::new_decl(format!("@{}", name), params_ty, ret_ty));
+            info.symbol_table.insert(name.to_string(), Symbol::Func(name.to_string(), function));
+        }
+        for comp_unit_item in &self.comp_unit_items {
+            match comp_unit_item {
+                CompUnitItem::Decl(decl) => {
+                    decl.generate_ir(program, info)?;
+                }
+                CompUnitItem::FuncDef(func_def) => {
+                    func_def.generate_ir(program, info)?;
+                }
+            }
+        }
+        info.symbol_table.pop_table();
+        Ok(())
     }
 }
 
@@ -25,12 +55,8 @@ impl GenerateIR for Decl {
 
 impl GenerateIR for ConstDecl {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
-        match self.b_type {
-            BType::Int => {
-                for const_def in &self.const_defs {
-                    const_def.generate_ir(program, info)?;
-                }
-            }
+        for const_def in &self.const_defs {
+            const_def.generate_ir(program, info)?;
         }
         Ok(())
     }
@@ -51,12 +77,8 @@ impl GenerateIR for ConstDef {
 
 impl GenerateIR for VarDecl {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
-        match self.b_type {
-            BType::Int => {
-                for var_def in &self.var_defs {
-                    var_def.generate_ir(program, info)?;
-                }
-            }
+        for var_def in &self.var_defs {
+            var_def.generate_ir(program, info)?;
         }
         Ok(())
     }
@@ -64,21 +86,40 @@ impl GenerateIR for VarDecl {
 
 impl GenerateIR for VarDef {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
-        let func = info.context.function.unwrap();
-        let func_data = program.func_mut(func);
-        let var = func_data.dfg_mut().new_value().alloc(Type::get_i32());
-        func_data.dfg_mut().set_value_name(var, Some(format!("@{}", self.ident)));
-        func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([var]);
-        if info.symbol_table.insert(
-            self.ident.clone(), super::irinfo::Symbol::Var(self.ident.clone(), var)
-        ).is_some() {
-            return Err("Redefined symbol".to_string());
-        }
-        if let Some(init_val) = &self.init_val {
-            init_val.generate_ir(program, info)?;
+        if info.symbol_table.depth() == 0 {
+            let init = match &self.init_val {
+                Some(init_val) => {
+                    let int = init_val.exp.solve(info).map_err(|_err| "Unknown value during compile time")?;
+                    program.new_value().integer(int)
+                }
+                None => {
+                    program.new_value().zero_init(Type::get_i32())
+                }
+            };
+            let var = program.new_value().global_alloc(init);
+            program.set_value_name(var, Some(format!("@{}", self.ident)));
+            if info.symbol_table.insert(
+                self.ident.clone(), super::irinfo::Symbol::Var(self.ident.clone(), var)
+            ).is_some() {
+                return Err("Redefined symbol".to_string());
+            }
+        } else {
+            let func = info.context.function.unwrap();
             let func_data = program.func_mut(func);
-            let store = func_data.dfg_mut().new_value().store(info.context.value.unwrap(), var);
-            func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([store]);
+            let var = func_data.dfg_mut().new_value().alloc(Type::get_i32());
+            func_data.dfg_mut().set_value_name(var, Some(format!("@{}", self.ident)));
+            func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([var]);
+            if info.symbol_table.insert(
+                self.ident.clone(), super::irinfo::Symbol::Var(self.ident.clone(), var)
+            ).is_some() {
+                return Err("Redefined symbol".to_string());
+            }
+            if let Some(init_val) = &self.init_val {
+                init_val.generate_ir(program, info)?;
+                let func_data = program.func_mut(func);
+                let store = func_data.dfg_mut().new_value().store(info.context.value.unwrap(), var);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([store]);
+            }
         }
         Ok(())
     }
@@ -93,13 +134,23 @@ impl GenerateIR for InitVal {
 impl GenerateIR for FuncDef {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         let ret_ty = match self.func_type {
+            FuncType::Void => Type::get_unit(),
             FuncType::Int => Type::get_i32(),
         };
+        let mut params_ty = Vec::new();
+        if let Some(params) = &self.params {
+            for param in &params.params {
+                params_ty.push((Some(format!("@{}", param.ident)), Type::get_i32()));
+            }
+        }
         let func = program.new_func(
-            FunctionData::new(
-                format!("@{}", self.ident.as_str()), vec![], ret_ty
+            FunctionData::with_param_names(
+                format!("@{}", self.ident), params_ty, ret_ty
             )
         );
+        if info.symbol_table.insert(self.ident.clone(), Symbol::Func(self.ident.clone(), func)).is_some() {
+            return Err("Redefined symbol".to_string());
+        }
 
         let func_data = program.func_mut(func);
         let entry = func_data.dfg_mut().new_bb().basic_block(Some("%entry".into()));
@@ -107,13 +158,17 @@ impl GenerateIR for FuncDef {
 
         info.context.function = Some(func);
         info.context.block = Some(entry);
+        info.context.exited = false;
 
         self.block.generate_ir(program, info)?;
 
         if !info.context.exited {
             let func_data = program.func_mut(info.context.function.unwrap());
-            let zero = func_data.dfg_mut().new_value().integer(0);
-            let ret = func_data.dfg_mut().new_value().ret(Some(zero));
+            let value = match self.func_type {
+                FuncType::Void => None,
+                FuncType::Int => Some(func_data.dfg_mut().new_value().integer(0)),
+            };
+            let ret = func_data.dfg_mut().new_value().ret(value);
             func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([ret]);
         }
 
@@ -124,6 +179,20 @@ impl GenerateIR for FuncDef {
 impl GenerateIR for Block {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String> {
         info.symbol_table.push_table();
+        if info.symbol_table.depth() == 1 {
+            let func = info.context.function.unwrap();
+            let params = Vec::from(program.func_mut(func).params());
+            for param in params {
+                let func_data = program.func(func);
+                let name = func_data.dfg().value(param).name().as_ref().unwrap().clone().split_off(1);
+                let func_data = program.func_mut(func);
+                let rp = func_data.dfg_mut().new_value().alloc(Type::get_i32());
+                func_data.dfg_mut().set_value_name(rp, Some(format!("%{}", name)));
+                let store = func_data.dfg_mut().new_value().store(param, rp);
+                func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([rp, store]);
+                info.symbol_table.insert(name.clone(), Symbol::Var(name.clone(), rp));
+            }
+        }
         for block_item in &self.block_items {
             if info.context.exited {
                 break;
@@ -160,8 +229,8 @@ impl GenerateIR for Stmt {
                     Some(Symbol::Const(_, _)) => {
                         return Err("Constant can not be a left value".to_string());
                     }
-                    None => {
-                        return Err("Undefined symbol".to_string());
+                    _ => {
+                        return Err("Undefined variable".to_string());
                     }
                 }
             }
@@ -318,10 +387,13 @@ impl GenerateIR for LVal {
                     func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([load]);
                     info.context.value = Some(load);
                 }
+                _ => {
+                    return Err("Undefined variable".to_string());
+                }
             }
             Ok(())
         } else {
-            Err("Undefined symbol".to_string())
+            Err("Undefined variable".to_string())
         }
     }
 }
@@ -354,6 +426,25 @@ impl GenerateIR for UnaryExp {
         match self {
             Self::Primary(primary_exp) => {
                 primary_exp.generate_ir(program, info)
+            }
+            Self::Func(ident, params) => {
+                if let Some(Symbol::Func(_, function)) = info.symbol_table.get(ident) {
+                    let function = function.clone();
+                    let mut args = Vec::new();
+                    if let Some(params) = params {
+                        for param in &params.params {
+                            param.generate_ir(program, info)?;
+                            args.push(info.context.value.unwrap());
+                        }
+                    }
+                    let func_data = program.func_mut(info.context.function.unwrap());
+                    let call = func_data.dfg_mut().new_value().call(function, args);
+                    func_data.layout_mut().bb_mut(info.context.block.unwrap()).insts_mut().extend([call]);
+                    info.context.value = Some(call);
+                    Ok(())
+                } else {
+                    Err("Undefined function".to_string())
+                }
             }
             Self::Unary(unary_op, unary_exp) => {
                 let unary_exp = unary_exp.as_ref();

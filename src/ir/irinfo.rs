@@ -6,17 +6,18 @@ use koopa::ir::{BasicBlock, Function, Value};
 pub struct Context {
     pub function: Option<Function>,
     pub block: Option<BasicBlock>,
-    pub exited: bool,
     pub value: Option<Value>,
+    pub exited: bool,
 }
 
 pub enum Symbol {
     Const(String, i32),
     Var(String, Value),
+    Func(String, Function),
 }
 
 #[derive(Default)]
-pub struct SymbolTableStack {
+pub struct SymbolTable {
     symbol_table_stack: Vec<HashMap<String, Symbol>>,
 }
 
@@ -28,15 +29,15 @@ pub struct WhileBlockInfo {
 #[derive(Default)]
 pub struct IrInfo {
     pub context: Context,
-    pub symbol_table: SymbolTableStack,
+    pub symbol_table: SymbolTable,
     pub if_cnt: usize,
     pub while_cnt: usize,
     pub while_info: Vec<WhileBlockInfo>,
 }
 
-impl SymbolTableStack {
+impl SymbolTable {
     pub fn depth(&self) -> usize {
-        self.symbol_table_stack.len()
+        self.symbol_table_stack.len() - 1
     }
 
     pub fn insert(&mut self, ident: String, symbol: Symbol) -> Option<Symbol> {

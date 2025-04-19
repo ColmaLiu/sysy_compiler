@@ -1,6 +1,12 @@
 #[derive(Debug)]
 pub struct CompUnit {
-    pub func_def: FuncDef,
+    pub comp_unit_items: Vec<CompUnitItem>,
+}
+
+#[derive(Debug)]
+pub enum CompUnitItem {
+    Decl(Decl),
+    FuncDef(FuncDef),
 }
 
 #[derive(Debug)]
@@ -11,13 +17,7 @@ pub enum Decl {
 
 #[derive(Debug)]
 pub struct ConstDecl {
-    pub b_type: BType,
     pub const_defs: Vec<ConstDef>,
-}
-
-#[derive(Debug)]
-pub enum BType {
-    Int,
 }
 
 #[derive(Debug)]
@@ -33,7 +33,6 @@ pub struct ConstInitVal {
 
 #[derive(Debug)]
 pub struct VarDecl {
-    pub b_type: BType,
     pub var_defs: Vec<VarDef>,
 }
 
@@ -52,12 +51,24 @@ pub struct InitVal {
 pub struct FuncDef {
     pub func_type: FuncType,
     pub ident: String,
+    pub params: Option<FuncFParams>,
     pub block: Block,
 }
 
 #[derive(Debug)]
 pub enum FuncType {
+    Void,
     Int,
+}
+
+#[derive(Debug)]
+pub struct FuncFParams {
+    pub params: Vec<FuncFParam>,
+}
+
+#[derive(Debug)]
+pub struct FuncFParam {
+    pub ident: String,
 }
 
 #[derive(Debug)]
@@ -108,6 +119,7 @@ pub enum Number {
 #[derive(Debug)]
 pub enum UnaryExp {
     Primary(PrimaryExp),
+    Func(String, Option<FuncRParams>),
     Unary(UnaryOp, Box<UnaryExp>),
 }
 
@@ -116,6 +128,11 @@ pub enum UnaryOp {
     Pos,
     Neg,
     Not,
+}
+
+#[derive(Debug)]
+pub struct FuncRParams {
+    pub params: Vec<Exp>,
 }
 
 #[derive(Debug)]
