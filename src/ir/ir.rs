@@ -1,95 +1,11 @@
 use std::iter::zip;
 
 use crate::ast_type::*;
-use koopa::ir::{builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, TypeKind, Value, ValueKind};
-use super::{irinfo::{Context, IrInfo, Symbol, WhileBlockInfo}, solve::Solve};
+use koopa::ir::{builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, ValueKind};
+use super::{exp::exp2ir, irinfo::{IrInfo, Symbol, WhileBlockInfo}, solve::Solve, var_type::{get_var_type, VarType}};
 
 pub trait GenerateIR {
     fn generate_ir(&self, program: &mut Program, info: &mut IrInfo) -> Result<(), String>;
-}
-
-trait Expression: GenerateIR {}
-
-fn exp2ir(
-    op: BinaryOp,
-    lexp: &dyn Expression,
-    rexp: &dyn Expression,
-    program: &mut Program,
-    info: &mut IrInfo,
-) -> Result<(), String> {
-    lexp.generate_ir(program, info)?;
-    let lhs = info.context.value.unwrap();
-    rexp.generate_ir(program, info)?;
-    let rhs = info.context.value.unwrap();
-    val2ir(op, lhs, rhs, program, &mut info.context);
-    Ok(())
-}
-
-fn val2ir(
-    op: BinaryOp,
-    lhs: Value,
-    rhs: Value,
-    program: &mut Program,
-    context: &mut Context,
-) {
-    let func_data = program.func_mut(context.function.unwrap());
-    let inst = func_data.dfg_mut().new_value().binary(op, lhs, rhs);
-    func_data.layout_mut().bb_mut(context.block.unwrap()).insts_mut().extend([inst]);
-    context.value = Some(inst);
-}
-
-#[derive(Debug)]
-enum VarType {
-    Int32,
-    Array(usize),
-    Pointer(usize),
-}
-
-fn get_ty_recursive(kind: &TypeKind) -> VarType {
-    match kind {
-        TypeKind::Int32 => {
-            VarType::Int32
-        }
-        TypeKind::Array(base_ty, _) => {
-            let var_ty = get_ty_recursive(base_ty.kind());
-            match var_ty {
-                VarType::Int32 => VarType::Array(1),
-                VarType::Array(n) => VarType::Array(n + 1),
-                VarType::Pointer(_) => unreachable!(),
-            }
-        }
-        TypeKind::Pointer(base_ty) => {
-            let var_ty = get_ty_recursive(base_ty.kind());
-            match var_ty {
-                VarType::Int32 => VarType::Pointer(1),
-                VarType::Array(n) => VarType::Pointer(n + 1),
-                VarType::Pointer(_) => unreachable!(),
-            }
-        }
-        _ => unreachable!(),
-    }
-}
-
-fn get_var_type(var: Value, is_glob: bool, program: &mut Program, info: &mut IrInfo) -> VarType {
-    let func = info.context.function.unwrap();
-    let func_data = program.func_mut(func);
-    let get = |kind: &TypeKind| {
-        match kind {
-            TypeKind::Pointer(ty) => {
-                let kind = ty.kind();
-                get_ty_recursive(kind)
-            }
-            _ => unreachable!(),
-        }
-    };
-    if is_glob {
-        let value = program.borrow_value(var);
-        let kind = value.ty().kind();
-        get(kind)
-    } else {
-        let kind = func_data.dfg().value(var).ty().kind();
-        get(kind)
-    }
 }
 
 impl GenerateIR for CompUnit {
@@ -912,14 +828,3 @@ impl GenerateIR for LOrExp {
         }
     }
 }
-
-impl Expression for Exp {}
-impl Expression for PrimaryExp {}
-impl Expression for Number {}
-impl Expression for UnaryExp {}
-impl Expression for MulExp {}
-impl Expression for AddExp {}
-impl Expression for RelExp {}
-impl Expression for EqExp {}
-impl Expression for LAndExp {}
-impl Expression for LOrExp {}
