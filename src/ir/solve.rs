@@ -13,7 +13,7 @@ impl Solve for Exp {
 
 impl Solve for LVal {
     fn solve(&self, info: &mut IrInfo) -> Result<i32, ()> {
-        if let Some(Symbol::Const(_, int)) = info.symbol_table.get(&self.ident) {
+        if let Some((Symbol::Const(_, int), _)) = info.symbol_table.get(&self.ident) {
             Ok(*int)
         } else {
             Err(())

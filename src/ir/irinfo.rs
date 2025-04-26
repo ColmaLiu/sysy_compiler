@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, iter::zip};
 
 use koopa::ir::{BasicBlock, Function, Value};
 
@@ -19,6 +19,7 @@ pub enum Symbol {
 #[derive(Default)]
 pub struct SymbolTable {
     symbol_table_stack: Vec<HashMap<String, Symbol>>,
+    is_entry: bool,
 }
 
 pub struct WhileBlockInfo {
@@ -45,14 +46,27 @@ impl SymbolTable {
         symbol_table.insert(ident, symbol)
     }
 
-    pub fn get(&self, ident: &String) -> Option<&Symbol> {
-        for symbol_table in self.symbol_table_stack.iter().rev() {
+    pub fn get(&self, ident: &String) -> Option<(&Symbol, bool)> {
+        for (symbol_table, depth) in zip(self.symbol_table_stack.iter(), 0..self.symbol_table_stack.len()).rev() {
             let symbol = symbol_table.get(ident);
             if symbol.is_some() {
-                return symbol;
+                return symbol.map(|symbol| (symbol, depth == 0));
             }
         }
         None
+    }
+
+    pub fn set_entry(&mut self) {
+        self.is_entry = true;
+    }
+
+    pub fn check_entry(&mut self) -> bool {
+        if self.is_entry {
+            self.is_entry = false;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn push_table(&mut self) {

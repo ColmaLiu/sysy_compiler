@@ -3,16 +3,17 @@
 // Decl          ::= ConstDecl | VarDecl;
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
 // BType         ::= "int";
-// ConstDef      ::= IDENT "=" ConstInitVal;
-// ConstInitVal  ::= ConstExp;
+// ConstDef      ::= IDENT {"[" ConstExp "]"} "=" ConstInitVal;
+// ConstInitVal  ::= ConstExp | "{" [ConstInitVal {"," ConstInitVal}] "}";
 // VarDecl       ::= BType VarDef {"," VarDef} ";";
-// VarDef        ::= IDENT | IDENT "=" InitVal;
-// InitVal       ::= Exp;
+// VarDef        ::= IDENT {"[" ConstExp "]"}
+//                 | IDENT {"[" ConstExp "]"} "=" InitVal;
+// InitVal       ::= Exp | "{" [InitVal {"," InitVal}] "}";
 // 
 // FuncDef       ::= FuncType IDENT "(" [FuncFParams] ")" Block;
 // FuncType      ::= "void" | "int";
 // FuncFParams   ::= FuncFParam {"," FuncFParam};
-// FuncFParam    ::= BType IDENT;
+// FuncFParam    ::= BType IDENT ["[" "]" {"[" ConstExp "]"}];
 // 
 // Block         ::= "{" {BlockItem} "}";
 // BlockItem     ::= Decl | Stmt;
@@ -26,7 +27,7 @@
 //                 | "return" [Exp] ";";
 // 
 // Exp           ::= LOrExp;
-// LVal          ::= IDENT;
+// LVal          ::= IDENT {"[" Exp "]"};
 // PrimaryExp    ::= "(" Exp ")" | LVal | Number;
 // Number        ::= INT_CONST;
 // UnaryExp      ::= PrimaryExp | IDENT "(" [FuncRParams] ")" | UnaryOp UnaryExp;
@@ -70,9 +71,7 @@ ConstDecl: ConstDecl = {
     },
 }
 
-ConstDef: ConstDef = <ident: IDENT> "=" <const_init_val: ConstInitVal> => ConstDef { <> };
-
-ConstInitVal: ConstInitVal = <const_exp: ConstExp> => ConstInitVal { <> };
+ConstDef: ConstDef = <ident: IDENT> <shape: ("[" <ConstExp> "]")*> "=" <init_val: InitVal> => ConstDef { <> };
 
 VarDecl: VarDecl = {
     "int" <mut var_defs: (<VarDef> ",")*> <var_def: VarDef> ";" => {
@@ -82,10 +81,17 @@ VarDecl: VarDecl = {
 }
 
 VarDef: VarDef = {
-    <ident: IDENT> <init_val: ("=" <InitVal>)?> => VarDef { <> },
+    <ident: IDENT> <shape: ("[" <ConstExp> "]")*> <init_val: ("=" <InitVal>)?> => VarDef { <> },
 }
 
-InitVal: InitVal = <exp: Exp> => InitVal { <> };
+InitVal: InitVal = {
+    <Exp> => InitVal::Int(<>),
+    "{" "}" => InitVal::Array(Vec::new()),
+    "{" <mut init_val_vec: (<InitVal> ",")*> <init_val: InitVal> "}" => {
+        init_val_vec.push(init_val);
+        InitVal::Array(init_val_vec)
+    }
+}
 
 FuncDef: FuncDef = {
     "void" <ident: IDENT> "(" <params: FuncFParams?> ")" <block: Block> => {
@@ -103,7 +109,10 @@ FuncFParams: FuncFParams = {
     },
 }
 
-FuncFParam: FuncFParam = "int" <ident: IDENT> => FuncFParam { <> };
+FuncFParam: FuncFParam = {
+    "int" <IDENT> => FuncFParam::Int(<>),
+    "int" <IDENT> "[" "]" <("[" <ConstExp> "]")*> => FuncFParam::Array(<>),
+}
 
 Block: Block = "{" <block_items: BlockItem*> "}" => Block { <> };
 
@@ -146,9 +155,9 @@ SimpleStmt: Stmt = {
     "return" <Exp?> ";" => Stmt::Return(<>),
 }
 
-Exp: Exp = <lor_exp: LOrExp> => Exp { <> };
+Exp: Exp = <lor_exp: LOrExp> => Exp { lor_exp: Box::new(lor_exp) };
 
-LVal: LVal = <ident: IDENT> => LVal { <> };
+LVal: LVal = <ident: IDENT> <index: ("[" <Exp> "]")*> => LVal { <> };
 
 PrimaryExp: PrimaryExp = {
     "(" <exp: Exp> ")" => PrimaryExp::Exp(Box::new(exp)),

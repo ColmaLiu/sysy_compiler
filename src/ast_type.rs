@@ -23,12 +23,8 @@ pub struct ConstDecl {
 #[derive(Debug)]
 pub struct ConstDef {
     pub ident: String,
-    pub const_init_val: ConstInitVal,
-}
-
-#[derive(Debug)]
-pub struct ConstInitVal {
-    pub const_exp: ConstExp,
+    pub shape: Vec<ConstExp>,
+    pub init_val: InitVal,
 }
 
 #[derive(Debug)]
@@ -39,12 +35,14 @@ pub struct VarDecl {
 #[derive(Debug)]
 pub struct VarDef {
     pub ident: String,
+    pub shape: Vec<ConstExp>,
     pub init_val: Option<InitVal>,
 }
 
 #[derive(Debug)]
-pub struct InitVal {
-    pub exp: Exp,
+pub enum InitVal {
+    Int(Exp),
+    Array(Vec<InitVal>),
 }
 
 #[derive(Debug)]
@@ -67,8 +65,9 @@ pub struct FuncFParams {
 }
 
 #[derive(Debug)]
-pub struct FuncFParam {
-    pub ident: String,
+pub enum FuncFParam {
+    Int(String),
+    Array(String, Vec<ConstExp>),
 }
 
 #[derive(Debug)]
@@ -96,12 +95,13 @@ pub enum Stmt {
 
 #[derive(Debug)]
 pub struct Exp {
-    pub lor_exp: LOrExp,
+    pub lor_exp: Box<LOrExp>,
 }
 
 #[derive(Debug)]
 pub struct LVal {
     pub ident: String,
+    pub index: Vec<Exp>,
 }
 
 #[derive(Debug)]
