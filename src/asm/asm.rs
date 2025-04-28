@@ -1,6 +1,6 @@
 use std::cmp;
 
-use koopa::ir::{values::{Binary, Branch, Call, Jump, Load, Return, Store}, BinaryOp, FunctionData, Program, Value, ValueKind};
+use koopa::ir::{values::{Binary, Branch, Call, GetElemPtr, GetPtr, Jump, Load, Return, Store}, BinaryOp, FunctionData, Program, TypeKind, Value, ValueKind};
 use super::{asminfo::AsmInfo, REGISTER};
 
 pub trait GenerateAsm {
@@ -15,27 +15,25 @@ impl GenerateAsm for Program {
         for var in self.inst_layout() {
             let value_data = self.borrow_value(*var);
             let name = &value_data.name().as_ref().unwrap()[1..];
-            info.glob_var.insert(*var, name.to_string());
+            let elem_size = match value_data.ty().kind() {
+                TypeKind::Pointer(ty) => {
+                    match ty.kind() {
+                        TypeKind::Array(ty, _) => ty.size(),
+                        TypeKind::Int32 => 4,// meaningless though
+                        _ => unreachable!(),
+                    }
+                }
+                _ => unreachable!(),
+            };
+            info.glob_var.insert(*var, (name.to_string(), elem_size));
             asm.push(format!("  .globl {}", name));
             asm.push(format!("{}:", name));
             match value_data.kind() {
                 ValueKind::GlobalAlloc(alloc) => {
                     let init = alloc.init();
-                    match self.borrow_value(init).kind() {
-                        ValueKind::ZeroInit(_) => {
-                            asm.push(format!("  .zero 4"));
-                        }
-                        ValueKind::Integer(int) => {
-                            asm.push(format!("  .word {}", int.value()));
-                        }
-                        _ => {
-                            return Err("Unexpected".to_string());
-                        }
-                    }
+                    glob_init(self, asm, init);
                 }
-                _ => {
-                    return Err("Unexpected".to_string());
-                }
+                _ => unreachable!(),
             }
         }
         asm.push("  .text".to_string());
@@ -56,6 +54,26 @@ impl GenerateAsm for Program {
     }
 }
 
+fn glob_init(program: &Program, asm: &mut Vec<String>, init: Value) {
+    let value_data = program.borrow_value(init);
+    match value_data.kind() {
+        ValueKind::ZeroInit(_) => {
+            // zeroinit is only for integer in my implementation,
+            // so the size is always 4
+            asm.push(format!("  .zero 4"));
+        }
+        ValueKind::Integer(int) => {
+            asm.push(format!("  .word {}", int.value()));
+        }
+        ValueKind::Aggregate(aggregate) => {
+            for elem in aggregate.elems() {
+                glob_init(program, asm, *elem);
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
 impl GenerateAsm for FunctionData {
     fn generate_asm(&self, asm: &mut Vec<String>, info: &mut AsmInfo) -> Result<(), String> {
         let name = &self.name()[1..];
@@ -72,8 +90,15 @@ impl GenerateAsm for FunctionData {
                     ra_used = true;
                     param_len = cmp::max(param_len, call.args().len());
                 }
-                if !value_data.ty().is_unit() {
-                    // This includes alloc instruction
+                if let ValueKind::Alloc(_) = value_data.kind() {
+                    match value_data.ty().kind() {
+                        TypeKind::Pointer(ty) => {
+                            local_space += ty.size();
+                            info.stack.insert(inst, local_space);
+                        }
+                        _ => unreachable!(),
+                    }
+                } else if !value_data.ty().is_unit() {
                     local_space += 4;
                     info.stack.insert(inst, local_space);
                 }
@@ -100,7 +125,7 @@ impl GenerateAsm for FunctionData {
             } else {
                 asm.push(format!("  li t0, {}", ra_offset));
                 asm.push(format!("  add t0, t0, sp"));
-                asm.push(format!("  sw ra (t0)"));
+                asm.push(format!("  sw ra, 0(t0)"));
             }
         }
 
@@ -116,6 +141,12 @@ impl GenerateAsm for FunctionData {
                     }
                     ValueKind::Store(store) => {
                         store_to_asm(self, asm, info, store, stack_frame)?;
+                    }
+                    ValueKind::GetPtr(get_ptr) => {
+                        get_ptr_to_asm(self, asm, info, get_ptr, inst, stack_frame)?;
+                    }
+                    ValueKind::GetElemPtr(get_elem_ptr) => {
+                        get_elem_ptr_to_asm(self, asm, info, get_elem_ptr, inst, stack_frame)?;
                     }
                     ValueKind::Binary(binary) => {
                         binary_to_asm(self, asm, info, binary, inst, stack_frame)?;
@@ -149,11 +180,11 @@ fn load_to_reg(
     value: Value,
     stack_frame: usize,
 ) -> Result<(usize, bool), String> {
-    if let Some(name) = info.glob_var.get(&value) {
+    if let Some((name, _)) = info.glob_var.get(&value) {
         let name = name.clone();
         let reg_idx = info.set_reg(value)?;
         asm.push(format!("  la {}, {}", REGISTER[reg_idx], name));
-        asm.push(format!("  lw {}, ({})", REGISTER[reg_idx], REGISTER[reg_idx]));
+        asm.push(format!("  lw {}, 0({})", REGISTER[reg_idx], REGISTER[reg_idx]));
         Ok((reg_idx, true))
     } else {
         let value_data = function_data.dfg().value(value);
@@ -181,7 +212,7 @@ fn load_to_reg(
                         let tmp_reg = info.get_vacant()?;
                         asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
                         asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
-                        asm.push(format!("  lw {}, ({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
+                        asm.push(format!("  lw {}, 0({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
                     }
                 }
                 Ok((reg_idx, true))
@@ -196,7 +227,7 @@ fn load_to_reg(
                     let tmp_reg = info.get_vacant()?;
                     asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
                     asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
-                    asm.push(format!("  lw {}, ({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
+                    asm.push(format!("  lw {}, 0({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
                 }
                 Ok((reg_idx, true))
             }
@@ -205,17 +236,17 @@ fn load_to_reg(
 }
 
 fn store_in_memory(
-    info: &mut AsmInfo,
     asm: &mut Vec<String>,
+    info: &mut AsmInfo,
     reg_idx: usize,
     dest: Value,
     stack_frame: usize,
 ) -> Result<(), String> {
-    if let Some(name) = info.glob_var.get(&dest) {
+    if let Some((name, _)) = info.glob_var.get(&dest) {
         let name = name.clone();
         let tmp_reg = info.get_vacant()?;
         asm.push(format!("  la {}, {}", REGISTER[tmp_reg], name));
-        asm.push(format!("  sw {}, ({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
+        asm.push(format!("  sw {}, 0({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
     } else {
         let ra_offset = if info.ra_used { 4 } else { 0 };
         let offset = stack_frame - info.stack.get(&dest).unwrap() - ra_offset;
@@ -225,7 +256,7 @@ fn store_in_memory(
             let tmp_reg = info.get_vacant()?;
             asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
             asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
-            asm.push(format!("  sw {}, ({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
+            asm.push(format!("  sw {}, 0({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
         }
     }
     Ok(())
@@ -238,8 +269,30 @@ fn load_to_asm(function_data: &FunctionData,
     inst: Value,
     stack_frame: usize,
 ) -> Result<(), String> {
-    let (reg_idx, need_free) = load_to_reg(function_data, asm, info, load.src(), stack_frame)?;
-    store_in_memory(info, asm, reg_idx, inst, stack_frame)?;
+    let src = load.src();
+    if info.glob_var.get(&src).is_none() {
+        let ra_offset = if info.ra_used { 4 } else { 0 };
+        let offset = stack_frame - info.stack.get(&src).unwrap() - ra_offset;
+        let value_data = function_data.dfg().value(src);
+        match value_data.kind() {
+            ValueKind::GetElemPtr(_) | ValueKind::GetPtr(_) => {
+                let tmp_reg = info.get_vacant()?;
+                if offset < 2048 {
+                    asm.push(format!("  lw {}, {}(sp)", REGISTER[tmp_reg], offset));
+                } else {
+                    asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
+                    asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
+                    asm.push(format!("  lw {}, 0({})", REGISTER[tmp_reg], REGISTER[tmp_reg]));
+                }
+                asm.push(format!("  lw {}, 0({})", REGISTER[tmp_reg], REGISTER[tmp_reg]));
+                store_in_memory(asm, info, tmp_reg, inst, stack_frame)?;
+                return Ok(());
+            }
+            _ => (),
+        }
+    }
+    let (reg_idx, need_free) = load_to_reg(function_data, asm, info, src, stack_frame)?;
+    store_in_memory(asm, info, reg_idx, inst, stack_frame)?;
     if need_free {
         info.free_reg(reg_idx);
     }
@@ -253,10 +306,132 @@ fn store_to_asm(function_data: &FunctionData,
     stack_frame: usize,
 ) -> Result<(), String> {
     let (reg_idx, need_free) = load_to_reg(function_data, asm, info, store.value(), stack_frame)?;
-    store_in_memory(info, asm, reg_idx, store.dest(), stack_frame)?;
+    let dest = store.dest();
+    if info.glob_var.get(&dest).is_none() {
+        let ra_offset = if info.ra_used { 4 } else { 0 };
+        let offset = stack_frame - info.stack.get(&dest).unwrap() - ra_offset;
+        let value_data = function_data.dfg().value(dest);
+        match value_data.kind() {
+            ValueKind::GetElemPtr(_) | ValueKind::GetPtr(_) => {
+                let tmp_reg = info.get_vacant()?;
+                if offset < 2048 {
+                    asm.push(format!("  lw {}, {}(sp)", REGISTER[tmp_reg], offset));
+                } else {
+                    asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
+                    asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
+                    asm.push(format!("  lw {}, 0({})", REGISTER[tmp_reg], REGISTER[tmp_reg]));
+                }
+                asm.push(format!("  sw {}, 0({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
+                if need_free {
+                    info.free_reg(reg_idx);
+                }
+                return Ok(());
+            }
+            _ => (),
+        }
+    }
+    store_in_memory(asm, info, reg_idx, store.dest(), stack_frame)?;
     if need_free {
         info.free_reg(reg_idx);
     }
+    Ok(())
+}
+
+fn get_ptr_to_asm(
+    function_data: &FunctionData,
+    asm: &mut Vec<String>,
+    info: &mut AsmInfo,
+    get_ptr: &GetPtr,
+    inst: Value,
+    stack_frame: usize,
+) -> Result<(), String> {
+    let src = get_ptr.src();
+    let index = get_ptr.index();
+    // src must be a local value(pointer)
+    let value_data = function_data.dfg().value(src);
+    let (src_reg_idx, _) = load_to_reg(function_data, asm, info, src, stack_frame)?;
+    // src is not integer 0, so src_reg_idx != 0
+    let elem_size = match value_data.ty().kind() {
+        TypeKind::Pointer(ty) => {
+            ty.size()
+        }
+        _ => unreachable!(),
+    };
+    let (index_reg_idx, need_free) = load_to_reg(function_data, asm, info, index, stack_frame)?;
+    let offset_reg_idx = info.get_vacant()?;
+    asm.push(format!("  li {}, {}", REGISTER[offset_reg_idx], elem_size));
+    asm.push(format!("  mul {}, {}, {}", REGISTER[offset_reg_idx], REGISTER[index_reg_idx], REGISTER[offset_reg_idx]));
+    if need_free {
+        info.free_reg(index_reg_idx);
+    }
+    asm.push(format!("  add {}, {}, {}", REGISTER[src_reg_idx], REGISTER[src_reg_idx], REGISTER[offset_reg_idx]));
+    store_in_memory(asm, info, src_reg_idx, inst, stack_frame)?;
+    info.free_reg(src_reg_idx);
+    Ok(())
+}
+
+fn get_elem_ptr_to_asm(
+    function_data: &FunctionData,
+    asm: &mut Vec<String>,
+    info: &mut AsmInfo,
+    get_elem_ptr: &GetElemPtr,
+    inst: Value,
+    stack_frame: usize,
+) -> Result<(), String> {
+    let src = get_elem_ptr.src();
+    let index = get_elem_ptr.index();
+    let mut src_reg_idx = info.set_reg(src)?;
+    let elem_size: usize;
+    if let Some((name, elem_size_)) = info.glob_var.get(&src) {
+        // must be GlobAlloc
+        let name = name.clone();
+        asm.push(format!("  la {}, {}", REGISTER[src_reg_idx], name));
+        elem_size = *elem_size_;
+    } else {
+        let value_data = function_data.dfg().value(src);
+        match value_data.kind() {
+            ValueKind::Alloc(_) => {
+                // array
+                let ra_offset = if info.ra_used { 4 } else { 0 };
+                let offset = stack_frame - info.stack.get(&src).unwrap() - ra_offset;
+                if offset < 2048 {
+                    asm.push(format!("  addi {}, sp, {}", REGISTER[src_reg_idx], offset));
+                } else {
+                    let tmp_reg = info.get_vacant()?;
+                    asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
+                    asm.push(format!("  add {}, {}, sp", REGISTER[src_reg_idx], REGISTER[tmp_reg]));
+                }
+            }
+            _ => {
+                // pointer
+                info.free_reg(src_reg_idx);
+                let (reg_idx, _) = load_to_reg(function_data, asm, info, src, stack_frame)?;
+                // src is not integer 0, so reg_idx != 0
+                src_reg_idx = reg_idx;
+            }
+        }
+        match value_data.ty().kind() {
+            TypeKind::Pointer(ty) => {
+                match ty.kind() {
+                    TypeKind::Array(ty, _) => {
+                        elem_size = ty.size();
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+    let (index_reg_idx, need_free) = load_to_reg(function_data, asm, info, index, stack_frame)?;
+    let offset_reg_idx = info.get_vacant()?;
+    asm.push(format!("  li {}, {}", REGISTER[offset_reg_idx], elem_size));
+    asm.push(format!("  mul {}, {}, {}", REGISTER[offset_reg_idx], REGISTER[index_reg_idx], REGISTER[offset_reg_idx]));
+    if need_free {
+        info.free_reg(index_reg_idx);
+    }
+    asm.push(format!("  add {}, {}, {}", REGISTER[src_reg_idx], REGISTER[src_reg_idx], REGISTER[offset_reg_idx]));
+    store_in_memory(asm, info, src_reg_idx, inst, stack_frame)?;
+    info.free_reg(src_reg_idx);
     Ok(())
 }
 
@@ -374,7 +549,7 @@ fn binary_to_asm(
         }
         _ => (),
     }
-    store_in_memory(info, asm, res_reg, inst, stack_frame)?;
+    store_in_memory(asm, info, res_reg, inst, stack_frame)?;
     info.free_reg(res_reg);
     Ok(())
 }
@@ -440,7 +615,7 @@ fn call_to_asm(
             let tmp_reg = info.get_vacant()?;
             asm.push(format!("  li {}, {}", REGISTER[tmp_reg], offset));
             asm.push(format!("  add {}, {}, sp", REGISTER[tmp_reg], REGISTER[tmp_reg]));
-            asm.push(format!("  sw {}, ({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
+            asm.push(format!("  sw {}, 0({})", REGISTER[reg_idx], REGISTER[tmp_reg]));
         }
         if need_free {
             info.free_reg(reg_idx);
@@ -449,7 +624,7 @@ fn call_to_asm(
     let function = info.function.get(&callee).unwrap();
     asm.push(format!("  call {}", function));
     if !function_data.dfg().value(inst).ty().is_unit() {
-        store_in_memory(info, asm, 10, inst, stack_frame)?;
+        store_in_memory(asm, info, 10, inst, stack_frame)?;
     }
     Ok(())
 }
@@ -484,7 +659,7 @@ fn return_to_asm(
         } else {
             asm.push(format!("  li t0, {}", ra_offset));
             asm.push(format!("  add t0, t0, sp"));
-            asm.push(format!("  lw ra (t0)"));
+            asm.push(format!("  lw ra, 0(t0)"));
         }
     }
     if stack_frame > 0 && stack_frame < 2048 {

@@ -7,7 +7,7 @@ use asm::asminfo::AsmInfo;
 use ir::irinfo::IrInfo;
 use ir::ir::GenerateIR;
 use koopa::back::KoopaGenerator;
-use koopa::ir::Program;
+use koopa::ir::{Program, Type};
 use lalrpop_util::lalrpop_mod;
 use std::env::args;
 use std::fs::{self, read_to_string, File};
@@ -46,6 +46,7 @@ fn main() -> Result<(), String> {
             |_e| {"Writing Koopa IR failed"}
         )?;
     } else if mode == "-riscv" {
+        Type::set_ptr_size(4);
         let mut asm = Vec::new();
         program.generate_asm(&mut asm, &mut AsmInfo::new())?;
         let mut file = File::create(output).map_err(

@@ -8,7 +8,7 @@ pub struct AsmInfo {
     pub reg: [Option<Value>; 32],
     pub stack: HashMap<Value, usize>,
     pub function: HashMap<Function, String>,
-    pub glob_var: HashMap<Value, String>,
+    pub glob_var: HashMap<Value, (String, usize)>,// (ident, elem_size)
     pub ra_used: bool,
 }
 
