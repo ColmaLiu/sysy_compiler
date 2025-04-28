@@ -571,8 +571,13 @@ fn branch_to_asm(
     if need_free {
         info.free_reg(reg_idx);
     }
-    asm.push(format!("  bnez {}, {}_{}", REGISTER[reg_idx], name, true_label));
+    // asm.push(format!("  bnez {}, {}_{}", REGISTER[reg_idx], name, true_label));
+    // asm.push(format!("  j {}_{}", name, false_label));
+    // use long jump instead
+    asm.push(format!("  bnez {}, {}_{}_pre", REGISTER[reg_idx], name, true_label));
     asm.push(format!("  j {}_{}", name, false_label));
+    asm.push(format!("{}_{}_pre:", name, true_label));
+    asm.push(format!("  j {}_{}", name, true_label));
     Ok(())
 }
 
