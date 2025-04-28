@@ -276,7 +276,7 @@ fn load_to_asm(function_data: &FunctionData,
         let value_data = function_data.dfg().value(src);
         match value_data.kind() {
             ValueKind::GetElemPtr(_) | ValueKind::GetPtr(_) => {
-                let tmp_reg = info.get_vacant()?;
+                let tmp_reg = info.set_reg(src)?;
                 if offset < 2048 {
                     asm.push(format!("  lw {}, {}(sp)", REGISTER[tmp_reg], offset));
                 } else {
@@ -286,6 +286,7 @@ fn load_to_asm(function_data: &FunctionData,
                 }
                 asm.push(format!("  lw {}, 0({})", REGISTER[tmp_reg], REGISTER[tmp_reg]));
                 store_in_memory(asm, info, tmp_reg, inst, stack_frame)?;
+                info.free_reg(tmp_reg);
                 return Ok(());
             }
             _ => (),
@@ -330,7 +331,7 @@ fn store_to_asm(function_data: &FunctionData,
             _ => (),
         }
     }
-    store_in_memory(asm, info, reg_idx, store.dest(), stack_frame)?;
+    store_in_memory(asm, info, reg_idx, dest, stack_frame)?;
     if need_free {
         info.free_reg(reg_idx);
     }
