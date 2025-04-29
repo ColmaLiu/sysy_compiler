@@ -52,7 +52,22 @@ fn store(func_data: &mut FunctionData, info: &mut IrInfo, array: Value, flatten_
 impl InitVal {
     pub fn init(&self, program: &mut Program, info: &mut IrInfo, shape: &[usize], ident: &String, uninit: bool) -> Result<(), String> {
         match self {
-            InitVal::Array(_) => {
+            InitVal::Array(init_val_vec) => {
+                if init_val_vec.is_empty() && info.symbol_table.depth() == 0 {
+                    let mut ty = Type::get_i32();
+                    for len in shape.iter().rev() {
+                        ty = Type::get_array(ty, *len);
+                    }
+                    let init = program.new_value().zero_init(ty);
+                    let array = program.new_value().global_alloc(init);
+                    program.set_value_name(array, Some(format!("@{}", ident)));
+                    if info.symbol_table.insert(
+                        ident.to_string(), super::irinfo::Symbol::Var(ident.to_string(), array)
+                    ).is_some() {
+                        return Err("Redefined symbol".to_string());
+                    }
+                    return Ok(());
+                }
                 let mut numel = 1;
                 for len in shape {
                     numel *= len;

@@ -58,9 +58,7 @@ fn glob_init(program: &Program, asm: &mut Vec<String>, init: Value) {
     let value_data = program.borrow_value(init);
     match value_data.kind() {
         ValueKind::ZeroInit(_) => {
-            // zeroinit is only for integer in my implementation,
-            // so the size is always 4
-            asm.push(format!("  .zero 4"));
+            asm.push(format!("  .zero {}", value_data.ty().size()));
         }
         ValueKind::Integer(int) => {
             asm.push(format!("  .word {}", int.value()));

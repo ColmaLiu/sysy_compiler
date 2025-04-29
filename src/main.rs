@@ -28,7 +28,7 @@ fn main() -> Result<(), String> {
     )?;
 
     match mode.as_str() {
-        "-koopa" | "-riscv" => Ok(()),
+        "-koopa" | "-riscv" | "-perf" => Ok(()),
         _ => Err("Unexpected mode"),
     }?;
 
@@ -45,7 +45,7 @@ fn main() -> Result<(), String> {
         fs::write(output, generator.writer()).map_err(
             |_e| {"Writing Koopa IR failed"}
         )?;
-    } else if mode == "-riscv" {
+    } else if mode == "-riscv" || mode == "-perf" {
         Type::set_ptr_size(4);
         let mut asm = Vec::new();
         program.generate_asm(&mut asm, &mut AsmInfo::new())?;
